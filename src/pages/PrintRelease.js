@@ -377,6 +377,7 @@ const PrintRelease = () => {
   const [linkTargetJobId, setLinkTargetJobId] = useState(null);
   const [autoPrintDone, setAutoPrintDone] = useState(false);
   const [printedViaIframe, setPrintedViaIframe] = useState(false);
+  const [serverJob, setServerJob] = useState(null);
 
   useEffect(() => {
     // Validate token and expiration (server-side or client-side)
@@ -391,6 +392,7 @@ const PrintRelease = () => {
         const { api } = await import('../api/client');
         const response = await api.get(`/api/jobs/${jobId}?token=${token}`);
         if (response.data.job) {
+          setServerJob(response.data.job);
           setLinkTargetJobId(jobId);
         }
       } catch (apiError) {
@@ -422,7 +424,7 @@ const PrintRelease = () => {
     if (!autoPrintDone) return;
 
     const jobId = params.jobId;
-    const job = printJobs.find(j => j.id === jobId);
+    const job = serverJob || printJobs.find(j => j.id === jobId);
 
     // If we have a stored document, load and print it via an iframe
     if (job?.document?.dataUrl && !printedViaIframe) {
@@ -529,7 +531,7 @@ const PrintRelease = () => {
       console.warn('Document content not found, cannot auto-print.');
       toast.error('Document content not available for printing. Please try downloading it instead.');
     }
-  }, [autoPrintDone, printedViaIframe, params.jobId, printJobs]);
+  }, [autoPrintDone, printedViaIframe, params.jobId, printJobs, serverJob]);
 
   // Auto-authenticate and print if valid token and jobId are present
   useEffect(() => {
@@ -537,7 +539,7 @@ const PrintRelease = () => {
     const search = new URLSearchParams(location.search);
     const token = search.get('token');
     if (!jobId || !token || autoPrintDone) return;
-    const job = printJobs.find(j => j.id === jobId && j.secureToken === token && j.status === 'pending');
+    const job = serverJob || printJobs.find(j => j.id === jobId && j.secureToken === token && j.status === 'pending');
     if (!job) return;
     // Find the user for this job
     const user = mockUsers.find(u => String(u.id) === String(job.userId));
@@ -560,10 +562,13 @@ const PrintRelease = () => {
         // setAutoPrintDone(true); 
       })
       .finally(() => setLoading(false));
-  }, [params.jobId, location.search, printJobs, printers, mockUsers, autoPrintDone, releasePrintJob]);
+  }, [params.jobId, location.search, printJobs, printers, mockUsers, autoPrintDone, releasePrintJob, serverJob]);
 
   const userJobs = authenticatedUser 
-    ? printJobs.filter(job => job.userId === authenticatedUser.id && job.status === 'pending')
+    ? [
+        ...(serverJob && serverJob.userId === authenticatedUser.id && serverJob.status === 'pending' ? [serverJob] : []),
+        ...printJobs.filter(job => job.userId === authenticatedUser.id && job.status === 'pending' && job.id !== serverJob?.id)
+      ]
     : [];
 
   const jobsToShow = linkTargetJobId

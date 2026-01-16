@@ -81,7 +81,9 @@ router.post('/', upload.single('file'), (req, res) => {
     createdAt: currentServerTime,
     token: secureToken,
     used: false,
-    filePath: req.file?.path || null // Store file path for deletion
+    filePath: req.file?.path || null, // Store file path for deletion
+    mimetype: req.file?.mimetype,
+    originalname: req.file?.originalname
   });
   
   // Prefer explicit public base URL if provided (useful behind tunnels/proxies)
@@ -166,6 +168,24 @@ router.get('/:id', (req, res) => {
   const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
   if (!job) return res.status(404).json({ error: 'Not found' });
   if (token && token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
+
+  // Attach document data if available
+  if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
+    try {
+      const fileBuffer = fs.readFileSync(metadata.filePath);
+      const base64 = fileBuffer.toString('base64');
+      const dataUrl = `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`;
+      
+      job.document = {
+        dataUrl,
+        mimeType: metadata.mimetype,
+        name: metadata.originalname || job.documentName
+      };
+    } catch (err) {
+      console.error('Error reading file for job:', id, err);
+    }
+  }
+
   res.json({ job });
 });
 
