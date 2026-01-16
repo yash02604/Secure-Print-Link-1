@@ -331,13 +331,28 @@ export const PrintJobProvider = ({ children }) => {
   // Client-side fallback (temporary - only used when API unavailable)
   const releasePrintJobClientSide = async (jobId, printerId, userId, token) => {
     const currentServerTime = Date.now();
-    const metadata = expirationMetadata.get(jobId);
+    let metadata = expirationMetadata.get(jobId);
     
+    // Fallback: If metadata is missing (e.g. page refresh), try to reconstruct it from printJobs
+    if (!metadata) {
+      const existingJob = printJobs.find(j => j.id === jobId);
+      if (existingJob && existingJob.secureToken === token && existingJob.expiresAt) {
+        // Reconstruct metadata from job info
+        metadata = {
+          expiresAt: new Date(existingJob.expiresAt).getTime(),
+          token: existingJob.secureToken,
+          used: existingJob.status !== 'pending'
+        };
+        // Restore to in-memory map
+        setExpirationMetadata(prev => new Map(prev).set(jobId, metadata));
+      }
+    }
+
     if (!metadata) {
       throw new Error('Print job not found or expired');
     }
     
-    if (usedTokens.has(token)) {
+    if (usedTokens.has(token) || metadata.used) {
       throw new Error('Token has already been used');
     }
     

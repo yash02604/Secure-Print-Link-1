@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
@@ -11,7 +11,6 @@ import {
   FaEye
 } from 'react-icons/fa';
 import { useParams, useLocation } from 'react-router-dom';
-
 
 const ReleaseContainer = styled.div`
   padding: 20px;
@@ -368,7 +367,6 @@ const PrintRelease = () => {
   const { loginWithPin, mockUsers } = useAuth();
   const { printJobs, releasePrintJob, printers, validateTokenAndExpiration } = usePrintJob();
   const params = useParams();
-  const autoReleaseOnceRef = useRef(false);
   const location = useLocation();
   const [authMethod, setAuthMethod] = useState(null);
   const [pin, setPin] = useState(['', '', '', '']);
@@ -381,7 +379,6 @@ const PrintRelease = () => {
   const [printedViaIframe, setPrintedViaIframe] = useState(false);
 
   useEffect(() => {
-    if (autoReleaseOnceRef.current) return;
     // Validate token and expiration (server-side or client-side)
     const jobId = params.jobId;
     const search = new URLSearchParams(location.search);
@@ -544,9 +541,6 @@ const PrintRelease = () => {
     setAuthenticatedUser(user);
     setSelectedPrinter(printer);
     setLoading(true);
-
-    autoReleaseOnceRef.current = true; // 🔒 HARD LOCK
-
     // Release the job automatically
     releasePrintJob(jobId, printer.id, user.id, token)
       .then(() => {
@@ -555,7 +549,8 @@ const PrintRelease = () => {
     })
       .catch((err) => {
         toast.error('Failed to auto-release print job: ' + (err.message || 'Unknown error'));
-        setAutoPrintDone(true);
+        // Do not proceed to print if release failed
+        // setAutoPrintDone(true); 
       })
       .finally(() => setLoading(false));
   }, [params.jobId, location.search, printJobs, printers, mockUsers, autoPrintDone, releasePrintJob]);
