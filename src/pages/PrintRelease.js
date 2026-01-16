@@ -7,7 +7,9 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { 
   FaQrcode, 
   FaKey, 
-  FaPrint
+  FaPrint,
+  FaEye,
+  FaDownload
 } from 'react-icons/fa';
 import { useParams, useLocation } from 'react-router-dom';
 
@@ -265,6 +267,8 @@ const JobItem = styled.div`
   .job-actions {
     display: flex;
     gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
   }
 `;
 
@@ -416,8 +420,11 @@ const PrintRelease = () => {
 
       const isPdf = (mimeType || '').includes('pdf');
       const isImage = (mimeType || '').startsWith('image/');
-      const isText = (mimeType || '') === 'text/plain';
-      const isUnsupportedOffice = /msword|officedocument/.test(mimeType || '');
+      const isText = (mimeType || '').includes('text/') || (mimeType || '') === 'text/plain';
+      const isWord = /msword|wordprocessingml/.test(mimeType || '');
+      const isExcel = /excel|spreadsheetml/.test(mimeType || '');
+      const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
+      const isOffice = isWord || isExcel || isPowerPoint || /officedocument/.test(mimeType || '');
 
       if (isPdf) {
         iframe.src = dataUrl;
@@ -448,11 +455,29 @@ const PrintRelease = () => {
         } else {
           window.open(dataUrl, '_blank');
         }
-      } else if (isUnsupportedOffice) {
-        toast.warning('DOC/DOCX cannot be printed directly in the browser. Please upload a PDF for direct printing.');
+      } else if (isOffice) {
+        // Office documents (Word, Excel, PowerPoint) - try to use Office Online Viewer or download
+        const officeType = isWord ? 'Word' : isExcel ? 'Excel' : 'PowerPoint';
+        toast.info(`${officeType} documents open in a new window. Use your browser's print function.`);
         window.open(dataUrl, '_blank');
+      } else if (isText) {
+        // Additional text formats (CSV, etc.)
+        const doc = iframe.contentWindow?.document;
+        if (doc) {
+          let textContent = '';
+          try {
+            const base64 = dataUrl.split(',')[1] || '';
+            textContent = atob(base64);
+          } catch (_) {}
+          doc.open();
+          doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8" /></head><body><pre style="padding:20px;font-family:monospace;">${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre></body></html>`);
+          doc.close();
+          setTimeout(printIframe, 200);
+        } else {
+          window.open(dataUrl, '_blank');
+        }
       } else {
-        // Unknown type: just try to open in a new tab so the browser/plugin can handle it
+        // Unknown type: open in a new tab so the browser/plugin can handle it
         window.open(dataUrl, '_blank');
       }
 
@@ -585,6 +610,183 @@ const PrintRelease = () => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  const handleViewDocument = (job) => {
+    if (!job?.document?.dataUrl) {
+      toast.warning('Document not available for preview');
+      return;
+    }
+
+    const { dataUrl, mimeType, name } = job.document;
+    const isPdf = (mimeType || '').includes('pdf');
+    const isImage = (mimeType || '').startsWith('image/');
+    const isText = (mimeType || '').includes('text/');
+    const isWord = /msword|wordprocessingml/.test(mimeType || '');
+    const isExcel = /excel|spreadsheetml/.test(mimeType || '');
+    const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
+    const isOffice = isWord || isExcel || isPowerPoint;
+
+    // For PDFs and images, open in a new window for viewing/printing
+    if (isPdf || isImage) {
+      const printWindow = window.open('', '_blank');
+      if (isPdf) {
+        printWindow.location.href = dataUrl;
+      } else if (isImage) {
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>${name || 'Document'}</title>
+              <style>
+                body { margin: 0; padding: 20px; text-align: center; background: #f5f5f5; }
+                img { max-width: 100%; height: auto; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+              </style>
+            </head>
+            <body>
+              <img src="${dataUrl}" alt="${name || 'Document'}" />
+              <script>window.onload = function() { window.focus(); }</script>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+      }
+    } else if (isText) {
+      // For text files, open in a new window with formatted text
+      try {
+        const base64 = dataUrl.split(',')[1] || '';
+        const textContent = atob(base64);
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>${name || 'Document'}</title>
+              <style>
+                body { margin: 0; padding: 20px; font-family: monospace; background: white; }
+                pre { white-space: pre-wrap; word-wrap: break-word; }
+              </style>
+            </head>
+            <body>
+              <pre>${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+      } catch (err) {
+        window.open(dataUrl, '_blank');
+      }
+    } else if (isOffice) {
+      // For Office documents, open for download/viewing
+      const officeType = isWord ? 'Word' : isExcel ? 'Excel' : 'PowerPoint';
+      toast.info(`Opening ${officeType} document. Use File > Print in your application to print.`);
+      
+      // Create a download link
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = name || 'document';
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      // For other formats, try to open directly
+      window.open(dataUrl, '_blank');
+    }
+  };
+
+  const handlePrintDocument = (job) => {
+    if (!job?.document?.dataUrl) {
+      toast.warning('Document not available for printing');
+      return;
+    }
+
+    const { dataUrl, mimeType, name } = job.document;
+    const isPdf = (mimeType || '').includes('pdf');
+    const isImage = (mimeType || '').startsWith('image/');
+    const isText = (mimeType || '').includes('text/');
+    const isWord = /msword|wordprocessingml/.test(mimeType || '');
+    const isExcel = /excel|spreadsheetml/.test(mimeType || '');
+    const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
+    const isOffice = isWord || isExcel || isPowerPoint;
+
+    // For PDFs, open and print
+    if (isPdf) {
+      const printWindow = window.open(dataUrl, '_blank');
+      if (printWindow) {
+        printWindow.addEventListener('load', () => {
+          setTimeout(() => printWindow.print(), 1000);
+        });
+      }
+    } else if (isImage) {
+      // For images, open in a new window and print
+      const printWindow = window.open('', '_blank');
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>${name || 'Document'}</title>
+            <style>
+              body { margin: 0; padding: 20px; text-align: center; }
+              img { max-width: 100%; height: auto; }
+              @media print { body { padding: 0; } }
+            </style>
+          </head>
+          <body>
+            <img src="${dataUrl}" alt="${name || 'Document'}" />
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.addEventListener('load', () => {
+        setTimeout(() => printWindow.print(), 500);
+      });
+    } else if (isText) {
+      // For text files, open and print
+      try {
+        const base64 = dataUrl.split(',')[1] || '';
+        const textContent = atob(base64);
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>${name || 'Document'}</title>
+              <style>
+                body { margin: 0; padding: 20px; font-family: monospace; }
+                pre { white-space: pre-wrap; word-wrap: break-word; }
+              </style>
+            </head>
+            <body>
+              <pre>${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+        printWindow.addEventListener('load', () => {
+          setTimeout(() => printWindow.print(), 500);
+        });
+      } catch (err) {
+        toast.error('Unable to print text document');
+      }
+    } else if (isOffice) {
+      // For Office documents, download and inform user
+      toast.info('Office documents need to be opened in their native application to print. Downloading file...');
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = name || 'document';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      // For other formats, try to open and print
+      const printWindow = window.open(dataUrl, '_blank');
+      if (printWindow) {
+        printWindow.addEventListener('load', () => {
+          setTimeout(() => printWindow.print(), 1000);
+        });
+      }
+    }
   };
 
   const getInitials = (name) => {
@@ -748,6 +950,28 @@ const PrintRelease = () => {
                           </div>
                         </div>
                         <div className="job-actions">
+                          {job.document?.dataUrl && (
+                            <>
+                              <ActionButton 
+                                className="secondary"
+                                onClick={() => handleViewDocument(job)}
+                                title="View Document"
+                                style={{ padding: '8px 12px', minWidth: 'auto' }}
+                              >
+                                <FaEye style={{ marginRight: '4px' }} />
+                                View
+                              </ActionButton>
+                              <ActionButton 
+                                className="secondary"
+                                onClick={() => handlePrintDocument(job)}
+                                title="Print Document"
+                                style={{ padding: '8px 12px', minWidth: 'auto' }}
+                              >
+                                <FaPrint style={{ marginRight: '4px' }} />
+                                Print
+                              </ActionButton>
+                            </>
+                          )}
                           <ActionButton 
                             className="primary"
                             onClick={() => handleReleaseJob(job.id)}

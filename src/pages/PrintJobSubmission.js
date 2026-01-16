@@ -8,6 +8,12 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { 
   FaUpload, 
   FaFileAlt, 
+  FaFilePdf,
+  FaFileWord,
+  FaFileExcel,
+  FaFilePowerpoint,
+  FaFileImage,
+  FaFileCode,
   FaPrint, 
   FaShieldAlt, 
   FaCog,
@@ -392,11 +398,26 @@ const PrintJobSubmission = () => {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
+      // PDF Documents
       'application/pdf': ['.pdf'],
+      // Word Documents
       'application/msword': ['.doc'],
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      // Excel Spreadsheets
+      'application/vnd.ms-excel': ['.xls'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      // PowerPoint Presentations
+      'application/vnd.ms-powerpoint': ['.ppt'],
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
+      // Text Files
       'text/plain': ['.txt'],
-      'image/*': ['.jpg', '.jpeg', '.png', '.gif']
+      'text/csv': ['.csv'],
+      // Images
+      'image/*': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'],
+      // Additional formats
+      'application/rtf': ['.rtf'],
+      'application/json': ['.json'],
+      'text/html': ['.html', '.htm']
     },
     multiple: false
   });
@@ -461,6 +482,39 @@ const PrintJobSubmission = () => {
       return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     };
 
+    const getFileIcon = (file) => {
+      if (!file) return FaFileAlt;
+      const fileName = file.name.toLowerCase();
+      const fileType = file.type.toLowerCase();
+      
+      // PDF
+      if (fileType.includes('pdf') || fileName.endsWith('.pdf')) {
+        return FaFilePdf;
+      }
+      // Word
+      if (fileType.includes('word') || fileType.includes('msword') || fileName.endsWith('.doc') || fileName.endsWith('.docx')) {
+        return FaFileWord;
+      }
+      // Excel
+      if (fileType.includes('excel') || fileType.includes('spreadsheet') || fileName.endsWith('.xls') || fileName.endsWith('.xlsx')) {
+        return FaFileExcel;
+      }
+      // PowerPoint
+      if (fileType.includes('powerpoint') || fileType.includes('presentation') || fileName.endsWith('.ppt') || fileName.endsWith('.pptx')) {
+        return FaFilePowerpoint;
+      }
+      // Images
+      if (fileType.startsWith('image/') || /\.(jpg|jpeg|png|gif|bmp|webp|svg)$/.test(fileName)) {
+        return FaFileImage;
+      }
+      // Code/Text
+      if (fileType.includes('text') || fileType.includes('json') || fileType.includes('html') || /\.(txt|csv|json|html|htm|js|css)$/.test(fileName)) {
+        return FaFileCode;
+      }
+      // Default
+      return FaFileAlt;
+    };
+
     const copyLink = async () => {
       if (lastSubmittedJob?.releaseLink) {
         await navigator.clipboard.writeText(lastSubmittedJob.releaseLink);
@@ -500,7 +554,8 @@ const PrintJobSubmission = () => {
                   {isDragActive ? 'Drop the file here' : 'Drag & drop a file here'}
                 </div>
                 <div className="upload-hint">
-                  or click to select a file (PDF, DOC, DOCX, TXT, Images)
+                  or click to select a file<br/>
+                  Supported formats: PDF, Word (DOC, DOCX), Excel (XLS, XLSX), PowerPoint (PPT, PPTX), Text (TXT), Images (JPG, PNG, GIF, etc.)
                 </div>
                 <button type="button" className="upload-button">
                   Choose File
@@ -508,20 +563,23 @@ const PrintJobSubmission = () => {
               </FileUploadSection>
             )}
 
-            {selectedFile && (
-              <FilePreview>
-                <div className="file-icon">
-                  <FaFileAlt />
-                </div>
-                <div className="file-info">
-                  <div className="file-name">{selectedFile.name}</div>
-                  <div className="file-size">{formatFileSize(selectedFile.size)}</div>
-                </div>
-                <button type="button" className="remove-file" onClick={removeFile}>
-                  <FaTimes />
-                </button>
-              </FilePreview>
-            )}
+            {selectedFile && (() => {
+              const FileIcon = getFileIcon(selectedFile);
+              return (
+                <FilePreview>
+                  <div className="file-icon">
+                    <FileIcon />
+                  </div>
+                  <div className="file-info">
+                    <div className="file-name">{selectedFile.name}</div>
+                    <div className="file-size">{formatFileSize(selectedFile.size)} • {selectedFile.type || 'Unknown type'}</div>
+                  </div>
+                  <button type="button" className="remove-file" onClick={removeFile}>
+                    <FaTimes />
+                  </button>
+                </FilePreview>
+              );
+            })()}
 
             {currentStep >= 2 && currentStep !== 3 && (
               <>
@@ -644,21 +702,23 @@ const PrintJobSubmission = () => {
                   </SecuritySection>
                 </FormSection>
 
-                <FormSection>
-                  <div className="section-title">
-                    <FaQrcode />
-                    Release QR Code
-                  </div>
-                  <QRCodeSection>
-                    <div className="qr-title">Scan this QR code at any printer to release your job</div>
-                    <div className="qr-code">
-                      <QRCodeCanvas 
-                        value={`https://secureprint.company.com/release/${Date.now()}`} 
-                        size={150} 
-                      />
+                {selectedFile && (
+                  <FormSection>
+                    <div className="section-title">
+                      <FaQrcode />
+                      Release QR Code
                     </div>
-                  </QRCodeSection>
-                </FormSection>
+                    <QRCodeSection>
+                      <div className="qr-title">Scan this QR code at any printer to release your job</div>
+                      <div className="qr-code">
+                        <QRCodeCanvas 
+                          value={lastSubmittedJob?.releaseLink || `${window.location.origin}/release/${Date.now()}`} 
+                          size={150} 
+                        />
+                      </div>
+                    </QRCodeSection>
+                  </FormSection>
+                )}
 
                 <FormGroup>
                   <label>Additional Notes (Optional)</label>
@@ -687,10 +747,24 @@ const PrintJobSubmission = () => {
                     Secure Release Link
                   </div>
                   <LinkBox>{lastSubmittedJob.releaseLink}</LinkBox>
-                  <CopyButton type="button" onClick={copyLink}>Copy Link</CopyButton>
+                  <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                    <CopyButton type="button" onClick={copyLink}>Copy Link</CopyButton>
+                    <CopyButton 
+                      type="button" 
+                      onClick={() => window.open(lastSubmittedJob.releaseLink, '_blank')}
+                      style={{ background: '#2ecc71' }}
+                      onMouseOver={(e) => e.target.style.background = '#27ae60'}
+                      onMouseOut={(e) => e.target.style.background = '#2ecc71'}
+                    >
+                      Open Print Link
+                    </CopyButton>
+                  </div>
                 </FormSection>
-                <div style={{ marginTop: 12, color: '#7f8c8d' }}>
-                  Share this link with the person at the printer to release the job. The link encodes a secure token unique to this job.
+                <div style={{ marginTop: 12, color: '#7f8c8d', fontSize: '14px' }}>
+                  <strong>📄 Document Formats Supported:</strong> PDF, Word (DOC, DOCX), Excel (XLS, XLSX), PowerPoint (PPT, PPTX), Text, Images, and more.
+                  <br /><br />
+                  Share this link with the person at the printer to release the job. The link encodes a secure token unique to this job. 
+                  Click "Open Print Link" to view and print your document directly.
                 </div>
               </>
             )}
