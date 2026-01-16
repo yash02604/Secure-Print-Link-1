@@ -428,6 +428,7 @@ const PrintRelease = () => {
 
     // If we have a stored document, load and print it via an iframe
     if (job?.document?.dataUrl && !printedViaIframe) {
+      console.log('Attempting to print document:', { mimeType: job.document.mimeType, name: job.document.name });
       const { dataUrl, mimeType } = job.document || {};
       const iframe = document.createElement('iframe');
       iframe.style.position = 'fixed';
@@ -440,13 +441,15 @@ const PrintRelease = () => {
 
       const printIframe = () => {
         try {
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.print();
+          if (!iframe.contentWindow) {
+            throw new Error('Iframe content window not accessible');
+          }
+          iframe.contentWindow.focus();
+          iframe.contentWindow.print();
           setPrintedViaIframe(true);
         } catch (error) {
           console.error('Iframe print failed:', error);
           toast.error('Failed to print document automatically. Please try downloading it.');
-          // Do NOT fallback to window.print() as it prints the UI
         }
       };
 
@@ -527,7 +530,7 @@ const PrintRelease = () => {
     // }, 300);
     // return () => clearTimeout(id);
 
-    if (!job?.document?.dataUrl && !printedViaIframe) {
+    if (!job?.document?.dataUrl && !printedViaIframe && !job?.status?.includes('completed')) {
       console.warn('Document content not found, cannot auto-print.');
       toast.error('Document content not available for printing. Please try downloading it instead.');
     }
