@@ -518,10 +518,15 @@ const PrintRelease = () => {
     }
 
     // If no embedded document is available, fallback to printing the page
-    const id = setTimeout(() => {
-      try { window.print(); } catch (_) {}
-    }, 300);
-    return () => clearTimeout(id);
+    // const id = setTimeout(() => {
+    //   try { window.print(); } catch (_) {}
+    // }, 300);
+    // return () => clearTimeout(id);
+
+    if (!job?.document?.dataUrl && !printedViaIframe) {
+      console.warn('Document content not found, cannot auto-print.');
+      toast.error('Document content not available for printing. Please try downloading it instead.');
+    }
   }, [autoPrintDone, printedViaIframe, params.jobId, printJobs]);
 
   // Auto-authenticate and print if valid token and jobId are present
