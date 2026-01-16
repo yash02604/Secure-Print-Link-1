@@ -441,8 +441,10 @@ const PrintRelease = () => {
           iframe.contentWindow?.focus();
           iframe.contentWindow?.print();
           setPrintedViaIframe(true);
-        } catch (_) {
-          window.print();
+        } catch (error) {
+          console.error('Iframe print failed:', error);
+          toast.error('Failed to print document automatically. Please try downloading it.');
+          // Do NOT fallback to window.print() as it prints the UI
         }
       };
 
