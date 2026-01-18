@@ -812,6 +812,27 @@ const PrintRelease = () => {
     });
   };
 
+  // Helper: Convert data URL to Blob URL to avoid browser size limits
+  const convertDataUrlToBlob = (dataUrl) => {
+    try {
+      if (!dataUrl.startsWith('data:')) return dataUrl;
+      
+      const arr = dataUrl.split(',');
+      const mime = arr[0].match(/:(.*?);/)[1];
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while(n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      const blob = new Blob([u8arr], {type: mime});
+      return URL.createObjectURL(blob);
+    } catch (e) {
+      console.warn('Failed to create blob URL, using data URL fallback', e);
+      return dataUrl;
+    }
+  };
+
   const handleViewDocument = (job) => {
     // Use cached document first, fallback to job document
     const documentData = cachedDocument || job?.document;
@@ -831,10 +852,19 @@ const PrintRelease = () => {
 
     // For PDFs and images, open in a new window for viewing/printing
     if (isPdf || isImage) {
-      const printWindow = window.open('', '_blank');
       if (isPdf) {
-        printWindow.location.href = dataUrl;
+        // Convert to blob URL for PDFs (avoids data URL size limits)
+        const blobUrl = convertDataUrlToBlob(dataUrl);
+        const printWindow = window.open(blobUrl, '_blank');
+        
+        // Cleanup blob URL after window loads
+        if (blobUrl !== dataUrl && printWindow) {
+          printWindow.addEventListener('load', () => {
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+          });
+        }
       } else if (isImage) {
+        const printWindow = window.open('', '_blank');
         printWindow.document.write(`
           <!DOCTYPE html>
           <html>
@@ -893,7 +923,16 @@ const PrintRelease = () => {
       document.body.removeChild(link);
     } else {
       // For other formats, try to open directly
-      window.open(dataUrl, '_blank');
+      // Use blob URL for safety (handles large files)
+      const blobUrl = convertDataUrlToBlob(dataUrl);
+      const printWindow = window.open(blobUrl, '_blank');
+      
+      // Cleanup blob URL after window loads
+      if (blobUrl !== dataUrl && printWindow) {
+        printWindow.addEventListener('load', () => {
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        });
+      }
     }
   };
 
@@ -916,10 +955,19 @@ const PrintRelease = () => {
 
     // For PDFs, open and print
     if (isPdf) {
-      const printWindow = window.open(dataUrl, '_blank');
+      // Convert to blob URL for PDFs (avoids data URL size limits)
+      const blobUrl = convertDataUrlToBlob(dataUrl);
+      const printWindow = window.open(blobUrl, '_blank');
+      
       if (printWindow) {
         printWindow.addEventListener('load', () => {
-          setTimeout(() => printWindow.print(), 1000);
+          setTimeout(() => {
+            printWindow.print();
+            // Cleanup blob URL after print dialog closes
+            if (blobUrl !== dataUrl) {
+              setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+            }
+          }, 1000);
         });
       }
     } else if (isImage) {
@@ -984,10 +1032,18 @@ const PrintRelease = () => {
       document.body.removeChild(link);
     } else {
       // For other formats, try to open and print
-      const printWindow = window.open(dataUrl, '_blank');
+      // Use blob URL for safety (handles large files)
+      const blobUrl = convertDataUrlToBlob(dataUrl);
+      const printWindow = window.open(blobUrl, '_blank');
       if (printWindow) {
         printWindow.addEventListener('load', () => {
-          setTimeout(() => printWindow.print(), 1000);
+          setTimeout(() => {
+            printWindow.print();
+            // Cleanup blob URL
+            if (blobUrl !== dataUrl) {
+              setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+            }
+          }, 1000);
         });
       }
     }
