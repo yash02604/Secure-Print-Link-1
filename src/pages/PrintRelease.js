@@ -8,7 +8,8 @@ import {
   FaQrcode, 
   FaKey, 
   FaPrint,
-  FaEye
+  FaEye,
+  FaChartBar
 } from 'react-icons/fa';
 import { useParams, useLocation } from 'react-router-dom';
 
@@ -306,37 +307,41 @@ const ActionButton = styled.button`
 `;
 
 const UserInfo = styled.div`
-  background: rgba(46, 204, 113, 0.2);
-  border: 1px solid rgba(46, 204, 113, 0.3);
+  // ... existing code ...
+`;
+
+const AnalysisSection = styled.div`
+  background: rgba(52, 152, 219, 0.1);
+  border: 1px solid rgba(52, 152, 219, 0.2);
   border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 20px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
+  padding: 16px;
+  margin-top: 20px;
   
-  .user-avatar {
-    width: 50px;
-    height: 50px;
-    border-radius: 50%;
-    background: #2ecc71;
+  .analysis-header {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
     display: flex;
     align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    font-weight: bold;
+    gap: 8px;
+    color: #3498db;
   }
   
-  .user-details {
-    .user-name {
-      font-size: 18px;
-      font-weight: 600;
+  .analysis-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 16px;
+  }
+  
+  .analysis-item {
+    .analysis-label {
+      font-size: 12px;
+      opacity: 0.7;
       margin-bottom: 4px;
     }
-    
-    .user-role {
-      font-size: 14px;
-      opacity: 0.8;
+    .analysis-value {
+      font-size: 18px;
+      font-weight: 600;
     }
   }
 `;
@@ -1136,46 +1141,70 @@ const PrintRelease = () => {
                 <>
                   <JobList>
                     {jobsWithDocuments.map(job => (
-                      <JobItem key={job.id}>
-                        <div className="job-info">
-                          <div className="job-icon">
-                            <FaPrint />
-                          </div>
-                          <div className="job-details">
-                            <div className="job-name">{job.documentName || 'Document'}</div>
-                            <div className="job-meta">
-                              {formatDate(job.submittedAt)} • {job.pages} pages • {job.copies} copies • ${job.cost}
+                      <JobItem key={job.id} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                          <div className="job-info">
+                            <div className="job-icon">
+                              <FaPrint />
+                            </div>
+                            <div className="job-details">
+                              <div className="job-name">{job.documentName || 'Document'}</div>
+                              <div className="job-meta">
+                                {formatDate(job.submittedAt)} • {job.pages} pages • {job.copies} copies • ${job.cost}
+                              </div>
                             </div>
                           </div>
+                          <div className="job-actions">
+                            <ActionButton 
+                              className="secondary"
+                              onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
+                              title={job.document?.dataUrl ? "View Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                            >
+                              <FaEye style={{ marginRight: '4px' }} />
+                              View
+                            </ActionButton>
+                            <ActionButton 
+                              className="secondary"
+                              onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
+                              title={job.document?.dataUrl ? "Print Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                            >
+                              <FaPrint style={{ marginRight: '4px' }} />
+                              Print
+                            </ActionButton>
+                            <ActionButton 
+                              className="primary"
+                              onClick={() => handleReleaseJob(job.id)}
+                              disabled={loading || !selectedPrinter}
+                              title="Release job to printer (document will be available after release)"
+                            >
+                              Release
+                            </ActionButton>
+                          </div>
                         </div>
-                        <div className="job-actions">
-                          <ActionButton 
-                            className="secondary"
-                            onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
-                            title={job.document?.dataUrl ? "View Document" : "No preview available"}
-                            style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
-                          >
-                            <FaEye style={{ marginRight: '4px' }} />
-                            View
-                          </ActionButton>
-                          <ActionButton 
-                            className="secondary"
-                            onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
-                            title={job.document?.dataUrl ? "Print Document" : "No preview available"}
-                            style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
-                          >
-                            <FaPrint style={{ marginRight: '4px' }} />
-                            Print
-                          </ActionButton>
-                          <ActionButton 
-                            className="primary"
-                            onClick={() => handleReleaseJob(job.id)}
-                            disabled={loading || !selectedPrinter}
-                            title="Release job to printer (document will be available after release)"
-                          >
-                            Release
-                          </ActionButton>
-                        </div>
+
+                        {job.analysis && (
+                          <AnalysisSection>
+                            <div className="analysis-header">
+                              <FaChartBar /> Document Analysis
+                            </div>
+                            <div className="analysis-grid">
+                              <div className="analysis-item">
+                                <div className="analysis-label">Estimated Word Count</div>
+                                <div className="analysis-value">{job.analysis.wordCount?.toLocaleString() || 'N/A'}</div>
+                              </div>
+                              <div className="analysis-item">
+                                <div className="analysis-label">Analysis Status</div>
+                                <div className="analysis-value">{job.analysis.status || 'Completed'}</div>
+                              </div>
+                              <div className="analysis-item">
+                                <div className="analysis-label">Features Detected</div>
+                                <div className="analysis-value">{job.analysis.features?.length || 0}</div>
+                              </div>
+                            </div>
+                          </AnalysisSection>
+                        )}
                       </JobItem>
                     ))}
                   </JobList>

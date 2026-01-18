@@ -18,6 +18,7 @@ const router = Router();
 // - Each release is authenticated but does NOT invalidate the link
 // - Only expiration time invalidates the link
 const expirationMetadata = new Map(); // jobId -> { expiresAt, createdAt, token, releaseCount }
+let dbInstance = null;
 
 // Cleanup loop: Periodically scan for expired jobs
 setInterval(() => {
@@ -48,6 +49,16 @@ setInterval(() => {
           console.error(`[Cleanup] Error deleting expired file ${metadata.filePath}:`, err);
         }
       }
+
+      // Delete from DB (will cascade to documents and analysis)
+      if (dbInstance) {
+        try {
+          dbInstance.prepare('DELETE FROM jobs WHERE id = ?').run(jobId);
+          console.log(`[Cleanup] Deleted job from DB: ${jobId}`);
+        } catch (err) {
+          console.error(`[Cleanup] Error deleting job from DB ${jobId}:`, err);
+        }
+      }
     });
   }
 }, 60000); // Run every minute
@@ -56,6 +67,7 @@ setInterval(() => {
 // Create job (multipart/form-data supported)
 router.post('/', upload.single('file'), (req, res) => {
   const db = req.db;
+  dbInstance = db; // Capture db instance for cleanup loop
   const body = req.body || {};
   const userId = body.userId;
   const userName = body.userName;
@@ -119,6 +131,41 @@ router.post('/', upload.single('file'), (req, res) => {
     expiresAt: new Date(expiresAt).toISOString()
   });
 
+  // Store document in DB and run analysis
+  if (req.file) {
+    try {
+      const documentId = nanoid();
+      const fileContent = fs.readFileSync(req.file.path);
+      
+      db.prepare(`INSERT INTO documents (
+        id, jobId, content, mimeType, filename, size, createdAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        documentId, id, fileContent, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString()
+      );
+
+      // Mock Document Analysis
+      const analysisId = nanoid();
+      const analysisResult = {
+        wordCount: Math.floor(fileContent.length / 6),
+        processedAt: new Date().toISOString(),
+        status: 'completed',
+        features: ['text-extraction', 'metadata-analysis']
+      };
+      
+      db.prepare(`INSERT INTO document_analysis (
+        id, documentId, analysisType, result, status, createdAt
+      ) VALUES (?, ?, ?, ?, ?, ?)`).run(
+        analysisId, documentId, 'basic_metrics', JSON.stringify(analysisResult), 'completed', new Date().toISOString()
+      );
+
+      // Optionally delete file from disk after storing in DB
+      // fs.unlinkSync(req.file.path); 
+      // But we keep it for now as expirationMetadata still references it for safety/backwards compatibility
+    } catch (err) {
+      console.error('Error storing document in DB:', err);
+    }
+  }
+
   res.json({
     success: true,
     job: { 
@@ -171,21 +218,41 @@ router.get('/:id', (req, res) => {
   if (!job) return res.status(404).json({ error: 'Not found' });
   if (token && token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
 
-  // Attach document data if available
-  if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
-    try {
-      const fileBuffer = fs.readFileSync(metadata.filePath);
-      const base64 = fileBuffer.toString('base64');
-      const dataUrl = `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`;
-      
+  // Fetch document from DB if available
+  try {
+    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
+    if (document) {
+      const base64 = document.content.toString('base64');
       job.document = {
-        dataUrl,
-        mimeType: metadata.mimetype,
-        name: metadata.originalname || job.documentName
+        dataUrl: `data:${document.mimeType};base64,${base64}`,
+        mimeType: document.mimeType,
+        name: document.filename,
+        size: document.size
       };
-    } catch (err) {
-      console.error('Error reading file for job:', id, err);
+      
+      // Fetch analysis
+      const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
+      if (analysis) {
+        job.analysis = JSON.parse(analysis.result);
+      }
+    } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
+      // Fallback to filesystem if not in DB (for older jobs or if DB storage failed)
+      try {
+        const fileBuffer = fs.readFileSync(metadata.filePath);
+        const base64 = fileBuffer.toString('base64');
+        const dataUrl = `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`;
+        
+        job.document = {
+          dataUrl,
+          mimeType: metadata.mimetype,
+          name: metadata.originalname || job.documentName
+        };
+      } catch (err) {
+        console.error('Error reading file for job:', id, err);
+      }
     }
+  } catch (err) {
+    console.error('Error fetching document/analysis from DB:', err);
   }
 
   res.json({ job });
