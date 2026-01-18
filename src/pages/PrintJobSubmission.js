@@ -615,7 +615,7 @@ const PrintJobSubmission = () => {
                 </div>
                 <div className="upload-hint">
                   or click to select a file<br/>
-                  <strong>Supported formats:</strong> PDF, Word (DOC, DOCX), Excel (XLS, XLSX), PowerPoint (PPT, PPTX), Text (TXT, CSV), Images (JPG, PNG, GIF, etc.), RTF, JSON, HTML
+                  <strong>Supported formats:</strong> PDF, (Word, Excel, PowerPoint can securely download through website) , Text (TXT, CSV), Images (JPG, PNG, GIF, etc.), RTF, JSON, HTML
                 </div>
                 {fileRejections && fileRejections.length > 0 && (
                   <div style={{ color: '#e74c3c', marginTop: '10px', fontSize: '14px' }}>
