@@ -694,6 +694,23 @@ const PrintRelease = () => {
     ? userJobs.filter(j => j.id === linkTargetJobId)
     : userJobs;
 
+  // BUGFIX: Ensure document data is available for display
+  // If cachedDocument exists, attach it to jobs that don't have document data
+  const jobsWithDocuments = jobsToShow.map(job => {
+    // Priority 1: Job already has document
+    if (job.document?.dataUrl) {
+      return job;
+    }
+    // Priority 2: Use cached document if job IDs match
+    if (cachedDocument && (linkTargetJobId === job.id || jobsToShow.length === 1)) {
+      console.log(`Attaching cached document to job ${job.id}`);
+      return { ...job, document: cachedDocument };
+    }
+    // Priority 3: No document available
+    console.warn(`Job ${job.id} (${job.documentName}) has no document data`);
+    return job;
+  });
+
   const handlePinChange = (index, value) => {
     if (value.length > 1) return;
     
@@ -765,7 +782,7 @@ const PrintRelease = () => {
     setLoading(true);
     try {
       const token = new URLSearchParams(location.search).get('token');
-      for (const job of jobsToShow) {
+      for (const job of jobsWithDocuments) {
         await releasePrintJob(job.id, selectedPrinter.id, authenticatedUser.id, token);
       }
       toast.success('All print jobs released successfully! You can release them again until the links expire.');
@@ -1118,7 +1135,7 @@ const PrintRelease = () => {
               {userJobs.length > 0 ? (
                 <>
                   <JobList>
-                    {jobsToShow.map(job => (
+                    {jobsWithDocuments.map(job => (
                       <JobItem key={job.id}>
                         <div className="job-info">
                           <div className="job-icon">
@@ -1132,36 +1149,29 @@ const PrintRelease = () => {
                           </div>
                         </div>
                         <div className="job-actions">
-                          {job.document?.dataUrl ? (
-                            <>
-                              <ActionButton 
-                                className="secondary"
-                                onClick={() => handleViewDocument(job)}
-                                title="View Document"
-                                style={{ padding: '8px 12px', minWidth: 'auto' }}
-                              >
-                                <FaEye style={{ marginRight: '4px' }} />
-                                View
-                              </ActionButton>
-                              <ActionButton 
-                                className="secondary"
-                                onClick={() => handlePrintDocument(job)}
-                                title="Print Document"
-                                style={{ padding: '8px 12px', minWidth: 'auto' }}
-                              >
-                                <FaPrint style={{ marginRight: '4px' }} />
-                                Print
-                              </ActionButton>
-                            </>
-                          ) : (
-                            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', marginRight: '8px' }}>
-                              No preview
-                            </div>
-                          )}
+                          <ActionButton 
+                            className="secondary"
+                            onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
+                            title={job.document?.dataUrl ? "View Document" : "No preview available"}
+                            style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                          >
+                            <FaEye style={{ marginRight: '4px' }} />
+                            View
+                          </ActionButton>
+                          <ActionButton 
+                            className="secondary"
+                            onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
+                            title={job.document?.dataUrl ? "Print Document" : "No preview available"}
+                            style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                          >
+                            <FaPrint style={{ marginRight: '4px' }} />
+                            Print
+                          </ActionButton>
                           <ActionButton 
                             className="primary"
                             onClick={() => handleReleaseJob(job.id)}
                             disabled={loading || !selectedPrinter}
+                            title="Release job to printer (document will be available after release)"
                           >
                             Release
                           </ActionButton>
@@ -1174,9 +1184,9 @@ const PrintRelease = () => {
                     <ActionButton 
                       className="primary"
                       onClick={handleReleaseAll}
-                      disabled={loading || !selectedPrinter || userJobs.length === 0}
+                      disabled={loading || !selectedPrinter || jobsWithDocuments.length === 0}
                     >
-                      {loading ? 'Releasing...' : `Release All Jobs (${userJobs.length})`}
+                      {loading ? 'Releasing...' : `Release All Jobs (${jobsWithDocuments.length})`}
                     </ActionButton>
                   </div>
                 </>
