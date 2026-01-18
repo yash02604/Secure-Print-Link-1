@@ -378,7 +378,14 @@ const PrintRelease = () => {
   const [autoPrintDone, setAutoPrintDone] = useState(false);
   const [printedViaIframe, setPrintedViaIframe] = useState(false);
   const [serverJob, setServerJob] = useState(null);
-  const releasingRef = React.useRef(false); // Ref to track release status across renders
+  
+  // SECURITY: Multi-use support - track releases per session, NOT globally
+  // - releasingRef prevents duplicate calls during same render cycle (React StrictMode)
+  // - releasedInSession tracks successful releases to avoid redundant API calls
+  // - Does NOT prevent multiple releases across page refreshes (by design)
+  const releasingRef = React.useRef(false); // Prevent concurrent release attempts
+  const releasedInSession = React.useRef(false); // Track if already released in current session
+  const [cachedDocument, setCachedDocument] = useState(null); // Cache document in browser memory
 
   useEffect(() => {
     // Validate token and expiration (server-side or client-side)
@@ -395,24 +402,48 @@ const PrintRelease = () => {
         if (response.data.job) {
           setServerJob(response.data.job);
           setLinkTargetJobId(jobId);
+          // Cache document in browser memory for multi-use
+          if (response.data.job.document) {
+            setCachedDocument(response.data.job.document);
+          }
         }
       } catch (apiError) {
+        // Check if this is an expiration error (expected behavior)
+        if (apiError.response?.status === 403) {
+          const errorMsg = apiError.response.data?.error || '';
+          if (errorMsg.includes('expired')) {
+            toast.info('This print link has expired', { autoClose: 5000 });
+          } else {
+            toast.error(errorMsg || 'Invalid or expired print link');
+          }
+          return;
+        }
+        
         // API not available - use client-side validation (fallback)
         if (validateTokenAndExpiration) {
           const validation = validateTokenAndExpiration(jobId, token);
           if (!validation.valid) {
-            toast.error(validation.error || 'Invalid or expired print link');
+            const errorMsg = validation.error || 'Invalid or expired print link';
+            if (errorMsg.includes('expired')) {
+              toast.info(errorMsg, { autoClose: 5000 });
+            } else {
+              toast.error(errorMsg);
+            }
             return;
           }
         }
         
-        const job = printJobs.find(j => j.id === jobId && j.secureToken === token && j.status === 'pending');
+        const job = printJobs.find(j => j.id === jobId && j.secureToken === token);
         if (job) {
           if (job.expiresAt && new Date(job.expiresAt) < new Date()) {
-            toast.error('This print link has expired');
+            toast.info('This print link has expired', { autoClose: 5000 });
             return;
           }
           setLinkTargetJobId(jobId);
+          // Cache document for multi-use
+          if (job.document) {
+            setCachedDocument(job.document);
+          }
         }
       }
     };
@@ -425,12 +456,13 @@ const PrintRelease = () => {
     if (!autoPrintDone) return;
 
     const jobId = params.jobId;
-    const job = serverJob || printJobs.find(j => j.id === jobId);
+    // Use cached document first, fallback to job document
+    const documentData = cachedDocument || serverJob?.document || printJobs.find(j => j.id === jobId)?.document;
 
     // If we have a stored document, load and print it via an iframe
-    if (job?.document?.dataUrl && !printedViaIframe) {
-      console.log('Attempting to print document:', { mimeType: job.document.mimeType, name: job.document.name });
-      const { dataUrl, mimeType } = job.document || {};
+    if (documentData?.dataUrl && !printedViaIframe) {
+      console.log('Attempting to print document:', { mimeType: documentData.mimeType, name: documentData.name });
+      const { dataUrl, mimeType } = documentData || {};
       const iframe = document.createElement('iframe');
       iframe.style.position = 'fixed';
       iframe.style.right = '0';
@@ -498,7 +530,7 @@ const PrintRelease = () => {
         }
       };
 
-      const fileName = (job.document?.name || '').toLowerCase();
+      const fileName = (documentData?.name || '').toLowerCase();
       // Check both MIME type and file extension for better detection
       const isPdf = (mimeType || '').includes('pdf') || fileName.endsWith('.pdf');
       const isImage = (mimeType || '').startsWith('image/') || /\.(jpg|jpeg|png|gif|bmp|webp|svg)$/.test(fileName);
@@ -511,14 +543,14 @@ const PrintRelease = () => {
       if (isPdf) {
         iframe.src = dataUrl;
         // Increase timeout to allow PDF viewer to fully initialize
-        iframe.onload = () => setTimeout(printIframe, 10000);
+        iframe.onload = () => setTimeout(printIframe, 100000);
       } else if (isImage) {
         const doc = iframe.contentWindow?.document;
         if (doc) {
           doc.open();
           doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8" /><style>html,body{margin:0;padding:0;height:100%}img{display:block;max-width:100%;max-height:100%;margin:auto}</style></head><body><img src="${dataUrl}" /></body></html>`);
           doc.close();
-          setTimeout(printIframe, 200);
+          setTimeout(printIframe, 200000);
         } else {
           window.open(dataUrl, '_blank');
         }
@@ -576,50 +608,85 @@ const PrintRelease = () => {
     // }, 300);
     // return () => clearTimeout(id);
 
-    if (!job?.document?.dataUrl && !printedViaIframe && !job?.status?.includes('completed')) {
+    if (!documentData?.dataUrl && !printedViaIframe) {
       console.warn('Document content not found, cannot auto-print.');
       toast.error('Document content not available for printing. Please try downloading it instead.');
     }
-  }, [autoPrintDone, printedViaIframe, params.jobId, printJobs, serverJob]);
+  }, [autoPrintDone, printedViaIframe, params.jobId, printJobs, serverJob, cachedDocument]);
 
-  // Auto-authenticate and print if valid token and jobId are present
+  // Auto-authenticate and release if valid token and jobId are present
+  // SECURITY: Multi-use design - can be called multiple times (page refresh)
+  // - releasingRef prevents duplicate calls in same render cycle (React StrictMode)
+  // - releasedInSession prevents redundant API calls within same page load
+  // - Page refresh resets session state, allowing re-validation
   useEffect(() => {
     const jobId = params.jobId;
     const search = new URLSearchParams(location.search);
     const token = search.get('token');
-    if (!jobId || !token || autoPrintDone || releasingRef.current) return;
-    const job = serverJob || printJobs.find(j => j.id === jobId && j.secureToken === token && j.status === 'pending');
+    
+    // Skip if: no job/token, already releasing, or already released in this session
+    if (!jobId || !token || releasingRef.current || releasedInSession.current) return;
+    
+    // Use cached document or fetch from server/printJobs
+    const documentData = cachedDocument || serverJob?.document;
+    const job = serverJob || printJobs.find(j => j.id === jobId && j.secureToken === token);
     if (!job) return;
+    
     // Find the user for this job
     const user = mockUsers.find(u => String(u.id) === String(job.userId));
     if (!user) return;
+    
     // Find the first available online printer
     const printer = printers.find(p => p.status === 'online');
     if (!printer) return;
     
-    releasingRef.current = true; // Mark as releasing
+    // Mark as releasing to prevent duplicate calls (React StrictMode)
+    releasingRef.current = true;
     setAuthenticatedUser(user);
     setSelectedPrinter(printer);
     setLoading(true);
+    
     // Release the job automatically
     releasePrintJob(jobId, printer.id, user.id, token)
       .then(() => {
-        toast.success('Print job released automatically!');
+        // Success - mark as released in this session
+        releasedInSession.current = true;
+        toast.success('Print job released successfully! You can print multiple times until the link expires.', {
+          autoClose: 5000
+        });
         setAutoPrintDone(true);
-    })
+        
+        // Cache document for future prints in this session
+        if (documentData && !cachedDocument) {
+          setCachedDocument(documentData);
+        }
+      })
       .catch((err) => {
-        releasingRef.current = false; // Reset on failure so we can try again
-        toast.error('Failed to auto-release print job: ' + (err.message || 'Unknown error'));
-        // Do not proceed to print if release failed
-        // setAutoPrintDone(true); 
+        // Check if error is due to expiration (expected behavior)
+        const errorMsg = err.message || 'Unknown error';
+        if (errorMsg.includes('expired')) {
+          toast.info('This print link has expired', { autoClose: 5000 });
+        } else if (errorMsg.includes('already been used')) {
+          // Should not happen with multi-use backend, but handle gracefully
+          toast.info('This link was already used in another session. The link remains valid until expiration.', {
+            autoClose: 5000
+          });
+          releasedInSession.current = true; // Treat as success
+        } else {
+          toast.error('Failed to release print job: ' + errorMsg);
+        }
+        // Reset releasing flag on error so user can retry manually
+        releasingRef.current = false;
       })
       .finally(() => setLoading(false));
-  }, [params.jobId, location.search, printJobs, printers, mockUsers, autoPrintDone, releasePrintJob, serverJob]);
+  }, [params.jobId, location.search, printJobs, printers, mockUsers, releasePrintJob, serverJob, cachedDocument]);
 
   const userJobs = authenticatedUser 
     ? [
-        ...(serverJob && serverJob.userId === authenticatedUser.id && serverJob.status === 'pending' ? [serverJob] : []),
-        ...printJobs.filter(job => job.userId === authenticatedUser.id && job.status === 'pending' && job.id !== serverJob?.id)
+        // Include serverJob if it matches user (ignore status for multi-use)
+        ...(serverJob && serverJob.userId === authenticatedUser.id ? [serverJob] : []),
+        // Include printJobs that match user (ignore status for multi-use)
+        ...printJobs.filter(job => job.userId === authenticatedUser.id && job.id !== serverJob?.id)
       ]
     : [];
 
@@ -670,9 +737,20 @@ const PrintRelease = () => {
     try {
       const token = new URLSearchParams(location.search).get('token');
       await releasePrintJob(jobId, selectedPrinter.id, authenticatedUser.id, token);
-      toast.success('Print job released successfully!');
+      toast.success('Print job released successfully! You can release it again until the link expires.');
+      
+      // Cache document for future use
+      const job = serverJob || printJobs.find(j => j.id === jobId);
+      if (job?.document && !cachedDocument) {
+        setCachedDocument(job.document);
+      }
     } catch (error) {
-      toast.error('Failed to release print job');
+      const errorMsg = error.message || 'Failed to release print job';
+      if (errorMsg.includes('expired')) {
+        toast.info('This print link has expired', { autoClose: 5000 });
+      } else {
+        toast.error(errorMsg);
+      }
     } finally {
       setLoading(false);
     }
@@ -690,9 +768,14 @@ const PrintRelease = () => {
       for (const job of jobsToShow) {
         await releasePrintJob(job.id, selectedPrinter.id, authenticatedUser.id, token);
       }
-      toast.success('All print jobs released successfully!');
+      toast.success('All print jobs released successfully! You can release them again until the links expire.');
     } catch (error) {
-      toast.error('Failed to release some print jobs');
+      const errorMsg = error.message || 'Failed to release some print jobs';
+      if (errorMsg.includes('expired')) {
+        toast.info('One or more print links have expired', { autoClose: 5000 });
+      } else {
+        toast.error(errorMsg);
+      }
     } finally {
       setLoading(false);
     }
@@ -708,12 +791,14 @@ const PrintRelease = () => {
   };
 
   const handleViewDocument = (job) => {
-    if (!job?.document?.dataUrl) {
+    // Use cached document first, fallback to job document
+    const documentData = cachedDocument || job?.document;
+    if (!documentData?.dataUrl) {
       toast.warning('Document not available for preview');
       return;
     }
 
-    const { dataUrl, mimeType, name } = job.document;
+    const { dataUrl, mimeType, name } = documentData;
     const isPdf = (mimeType || '').includes('pdf');
     const isImage = (mimeType || '').startsWith('image/');
     const isText = (mimeType || '').includes('text/');
@@ -791,12 +876,14 @@ const PrintRelease = () => {
   };
 
   const handlePrintDocument = (job) => {
-    if (!job?.document?.dataUrl) {
+    // Use cached document first, fallback to job document
+    const documentData = cachedDocument || job?.document;
+    if (!documentData?.dataUrl) {
       toast.warning('Document not available for printing');
       return;
     }
 
-    const { dataUrl, mimeType, name } = job.document;
+    const { dataUrl, mimeType, name } = documentData;
     const isPdf = (mimeType || '').includes('pdf');
     const isImage = (mimeType || '').startsWith('image/');
     const isText = (mimeType || '').includes('text/');

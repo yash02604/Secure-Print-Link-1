@@ -13,8 +13,11 @@ const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_
 const router = Router();
 
 // In-memory storage for expiration metadata (server memory - lost on restart by design)
-const expirationMetadata = new Map(); // jobId -> { expiresAt, createdAt, token, used }
-const usedTokens = new Set(); // Prevent token reuse
+// SECURITY MODEL: Multi-use links within time window, NOT single-use
+// - Links are usable MULTIPLE times until expiration
+// - Each release is authenticated but does NOT invalidate the link
+// - Only expiration time invalidates the link
+const expirationMetadata = new Map(); // jobId -> { expiresAt, createdAt, token, releaseCount }
 
 // Cleanup loop: Periodically scan for expired jobs
 setInterval(() => {
@@ -76,12 +79,13 @@ router.post('/', upload.single('file'), (req, res) => {
   const expiresAt = currentServerTime + (expirationDuration * 60 * 1000); // Convert minutes to milliseconds
   
   // Store expiration metadata in server memory
+  // Multi-use design: Track release count instead of "used" flag
   expirationMetadata.set(id, {
     expiresAt,
     createdAt: currentServerTime,
     token: secureToken,
-    used: false,
-    filePath: req.file?.path || null, // Store file path for deletion
+    releaseCount: 0, // Track how many times this link has been used (for logging/auditing)
+    filePath: req.file?.path || null, // Store file path - deleted ONLY on expiration
     mimetype: req.file?.mimetype,
     originalname: req.file?.originalname
   });
@@ -137,10 +141,8 @@ router.get('/:id', (req, res) => {
   const metadata = expirationMetadata.get(id);
   
   if (metadata) {
-    // Check if token has been used
-    if (usedTokens.has(token)) {
-      return res.status(403).json({ error: 'Token has already been used' });
-    }
+    // SECURITY: Multi-use validation - check token and expiration ONLY
+    // Do NOT check if token was used before (multi-use design)
     
     // Verify token matches
     if (metadata.token !== token) {
@@ -190,6 +192,11 @@ router.get('/:id', (req, res) => {
 });
 
 // Release job (requires token)
+// SECURITY MODEL: Multi-use release within time window
+// - Same link can be used multiple times until expiration
+// - Each release is authenticated and logged
+// - Job status does NOT prevent re-release (allows multiple prints)
+// - Files are NOT deleted after release (only on expiration)
 router.post('/:id/release', (req, res) => {
   const db = req.db;
   const { id } = req.params;
@@ -200,10 +207,8 @@ router.post('/:id/release', (req, res) => {
   const metadata = expirationMetadata.get(id);
   
   if (metadata) {
-    // Check if token has been used (prevent reuse)
-    if (usedTokens.has(token)) {
-      return res.status(403).json({ error: 'Token has already been used' });
-    }
+    // SECURITY: Multi-use validation - NO "already used" check
+    // Only verify token correctness and expiration
     
     // Verify token matches
     if (metadata.token !== token) {
@@ -229,39 +234,27 @@ router.post('/:id/release', (req, res) => {
   
   const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
   if (!job) return res.status(404).json({ error: 'Not found' });
-  if (job.status !== 'pending') return res.status(400).json({ error: 'Not pending' });
   if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
+  
+  // MULTI-USE: Do NOT check job.status - allow re-release of completed jobs
+  // This enables printing the same job multiple times within the time window
 
-  // Mark token as used (prevent reuse)
+  // Track release count for auditing (optional)
   if (metadata) {
-    usedTokens.add(token);
-    expirationMetadata.set(id, { ...metadata, used: true });
+    metadata.releaseCount = (metadata.releaseCount || 0) + 1;
+    expirationMetadata.set(id, metadata);
+    console.log(`[Release] Job ${id} released ${metadata.releaseCount} time(s)`);
   }
 
-  db.prepare('UPDATE jobs SET status = ?, releasedAt = ?, printerId = ?, releasedBy = ? WHERE id = ?')
-    .run('printing', new Date().toISOString(), printerId || null, releasedBy || null, id);
+  // Update job metadata (last release time, printer, user) but keep status as 'pending'
+  // This allows the same job to be released multiple times
+  db.prepare('UPDATE jobs SET releasedAt = ?, printerId = ?, releasedBy = ? WHERE id = ?')
+    .run(new Date().toISOString(), printerId || null, releasedBy || null, id);
 
-  // Schedule file deletion after printing (simulate 3 second delay)
-  setTimeout(() => {
-    if (metadata?.filePath) {
-      try {
-        if (fs.existsSync(metadata.filePath)) {
-          fs.unlinkSync(metadata.filePath);
-          console.log(`[Release] Deleted file after printing: ${metadata.filePath}`);
-        }
-        // Clean up metadata
-        expirationMetadata.delete(id);
-      } catch (err) {
-        console.error('Error deleting file after printing:', err);
-      }
-    }
-    
-    // Update job status to completed
-    db.prepare('UPDATE jobs SET status = ?, completedAt = ? WHERE id = ?')
-      .run('completed', new Date().toISOString(), id);
-  }, 3000);
+  // DO NOT delete files after release - files are deleted ONLY on expiration
+  // DO NOT change status to 'completed' - keep job available for re-release
 
-  res.json({ success: true });
+  res.json({ success: true, releaseCount: metadata?.releaseCount || 1 });
 });
 
 // Complete job (simulate)

@@ -16,9 +16,10 @@ export const PrintJobProvider = ({ children }) => {
   const [printJobs, setPrintJobs] = useState([]);
   const [printers, setPrinters] = useState([]);
   const [loading, setLoading] = useState(false);
-  // In-memory storage for expiration metadata (simulates server memory)
+  // In-memory storage for expiration metadata (client-side fallback)
+  // SECURITY MODEL: Multi-use links within time window (matches server behavior)
   const [expirationMetadata, setExpirationMetadata] = useState(new Map());
-  const [usedTokens, setUsedTokens] = useState(new Set()); // Prevent token reuse
+  // REMOVED: usedTokens - no longer needed for multi-use design
 
   useEffect(() => {
     // Mock printers for demonstration
@@ -238,13 +239,14 @@ export const PrintJobProvider = ({ children }) => {
     const expiresAt = currentServerTime + (expirationDuration * 60 * 1000);
     
     // Store expiration metadata in memory (client-side fallback)
+    // Multi-use design: Track release count instead of "used" flag
     setExpirationMetadata(prev => {
       const newMap = new Map(prev);
       newMap.set(jobId, {
         expiresAt,
         createdAt: currentServerTime,
         token: secureToken,
-        used: false
+        releaseCount: 0 // Track releases for auditing
       });
       return newMap;
     });
@@ -297,38 +299,41 @@ export const PrintJobProvider = ({ children }) => {
         });
 
         if (response.data.success) {
-          // Update local state
+          // MULTI-USE: Do NOT change status to 'printing' or 'completed'
+          // Keep job available for re-release within time window
+          // Only update metadata (last release time, printer, user)
           setPrintJobs(prev => prev.map(job =>
             job.id === jobId
-              ? { ...job, status: 'printing', releasedAt: new Date().toISOString(), printerId, releasedBy: userId }
+              ? { ...job, releasedAt: new Date().toISOString(), printerId, releasedBy: userId }
               : job
           ));
           
-          // Mark as completed after delay (server handles file deletion)
-          setTimeout(() => {
-            setPrintJobs(prev => prev.map(job => 
-              job.id === jobId 
-                ? { ...job, status: 'completed', completedAt: new Date().toISOString(), document: null }
-                : job
-            ));
-          }, 3000);
+          // DO NOT delete document or change status - allow multi-use
+          // Server tracks release count for auditing
           
-          return { success: true };
+          return { success: true, releaseCount: response.data.releaseCount };
         }
       } catch (apiError) {
+        // Check for specific error types
+        if (apiError.response?.status === 403) {
+          const errorMsg = apiError.response.data?.error || '';
+          // Re-throw with original message for proper handling
+          throw new Error(errorMsg || 'Access denied');
+        }
         // API not available - fallback to client-side validation
         console.warn('Server API not available, using client-side fallback:', apiError.message);
         return await releasePrintJobClientSide(jobId, printerId, userId, token);
       }
     } catch (err) {
       console.error(err);
-      throw new Error(err.message || 'Failed to release print job');
+      throw err; // Re-throw original error with message intact
     } finally {
       setLoading(false);
     }
   };
 
   // Client-side fallback (temporary - only used when API unavailable)
+  // SECURITY MODEL: Multi-use release within time window
   const releasePrintJobClientSide = async (jobId, printerId, userId, token) => {
     const currentServerTime = Date.now();
     let metadata = expirationMetadata.get(jobId);
@@ -337,11 +342,11 @@ export const PrintJobProvider = ({ children }) => {
     if (!metadata) {
       const existingJob = printJobs.find(j => j.id === jobId);
       if (existingJob && existingJob.secureToken === token && existingJob.expiresAt) {
-        // Reconstruct metadata from job info
+        // Reconstruct metadata from job info - multi-use design
         metadata = {
           expiresAt: new Date(existingJob.expiresAt).getTime(),
           token: existingJob.secureToken,
-          used: existingJob.status !== 'pending'
+          releaseCount: 0 // Reset count on reconstruct
         };
         // Restore to in-memory map
         setExpirationMetadata(prev => new Map(prev).set(jobId, metadata));
@@ -352,9 +357,8 @@ export const PrintJobProvider = ({ children }) => {
       throw new Error('Print job not found or expired');
     }
     
-    if (usedTokens.has(token) || metadata.used) {
-      throw new Error('Token has already been used');
-    }
+    // MULTI-USE: Do NOT check if token was used before
+    // Only verify token correctness and expiration
     
     if (metadata.token !== token) {
       throw new Error('Invalid token');
@@ -374,45 +378,29 @@ export const PrintJobProvider = ({ children }) => {
       throw new Error('Invalid release token');
     }
     
-    setUsedTokens(prev => new Set(prev).add(token));
+    // Track release count for auditing
     setExpirationMetadata(prev => {
       const newMap = new Map(prev);
       const meta = newMap.get(jobId);
       if (meta) {
-        newMap.set(jobId, { ...meta, used: true });
+        meta.releaseCount = (meta.releaseCount || 0) + 1;
+        newMap.set(jobId, meta);
       }
       return newMap;
     });
 
+    // MULTI-USE: Do NOT change status - keep job available for re-release
+    // Only update metadata (last release time, printer, user)
     setPrintJobs(prev => prev.map(job =>
       job.id === jobId
-        ? { ...job, status: 'printing', releasedAt: new Date().toISOString(), printerId, releasedBy: userId }
+        ? { ...job, releasedAt: new Date().toISOString(), printerId, releasedBy: userId }
         : job
     ));
     
-    // Delete file after successful printing (automatic cleanup)
-    setTimeout(() => {
-      setPrintJobs(prev => prev.map(job => {
-        if (job.id === jobId) {
-          return { 
-            ...job, 
-            status: 'completed', 
-            completedAt: new Date().toISOString(),
-            document: null // Delete document data
-          };
-        }
-        return job;
-      }));
-      
-      // Clean up expiration metadata
-      setExpirationMetadata(prev => {
-        const newMap = new Map(prev);
-        newMap.delete(jobId);
-        return newMap;
-      });
-    }, 3000);
+    // DO NOT delete document or change status - allow multiple releases
+    // Documents are deleted ONLY on expiration (cleanup loop)
     
-    return { success: true };
+    return { success: true, releaseCount: metadata.releaseCount };
   };
 
   const cancelPrintJob = async (jobId) => {
@@ -517,6 +505,7 @@ export const PrintJobProvider = ({ children }) => {
   };
 
   // Validate token and expiration (for use in PrintRelease)
+  // MULTI-USE: Only check token correctness and expiration, NOT if it was used
   const validateTokenAndExpiration = (jobId, token) => {
     const currentServerTime = Date.now();
     const metadata = expirationMetadata.get(jobId);
@@ -525,9 +514,7 @@ export const PrintJobProvider = ({ children }) => {
       return { valid: false, error: 'Print job not found or expired' };
     }
     
-    if (usedTokens.has(token)) {
-      return { valid: false, error: 'Token has already been used' };
-    }
+    // MULTI-USE: Do NOT check if token was used
     
     if (metadata.token !== token) {
       return { valid: false, error: 'Invalid token' };
