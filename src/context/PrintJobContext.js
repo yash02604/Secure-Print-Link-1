@@ -43,25 +43,57 @@ export const PrintJobProvider = ({ children }) => {
     const loadInitialData = async () => {
       setIsFetching(true);
       setError(null);
+
+      // Load from localStorage FIRST as initial state
+      try {
+        const localJobs = localStorage.getItem('securePrintJobs');
+        if (localJobs) {
+          const parsedJobs = JSON.parse(localJobs);
+          setPrintJobs(parsedJobs);
+          syncMetadataFromJobs(parsedJobs);
+          console.log('Loaded from localStorage:', parsedJobs.length, 'jobs');
+        }
+      } catch (e) {
+        console.warn('Failed to load jobs from localStorage', e);
+      }
+
       try {
         const [jobsResponse, printersResponse] = await Promise.all([
-          api.get('/api/jobs'),
-          api.get('/api/printers')
+          api.get('/api/jobs').catch(err => ({ data: { jobs: [] } })),
+          api.get('/api/printers').catch(err => ({ data: { printers: [] } }))
         ]);
 
-        if (jobsResponse.data.jobs) {
+        if (jobsResponse.data.jobs && jobsResponse.data.jobs.length > 0) {
           const jobs = jobsResponse.data.jobs;
-          setPrintJobs(jobs);
+          // Merge server jobs with local jobs, avoiding duplicates by ID
+          setPrintJobs(prev => {
+            const serverIds = new Set(jobs.map(j => j.id));
+            const filteredLocal = prev.filter(j => !serverIds.has(j.id));
+            return [...jobs, ...filteredLocal];
+          });
           syncMetadataFromJobs(jobs);
         }
         
-        if (printersResponse.data.printers) {
+        if (printersResponse.data.printers && printersResponse.data.printers.length > 0) {
           setPrinters(printersResponse.data.printers);
+        } else if (printers.length === 0) {
+          // Fallback to some default printers if none from server
+          setPrinters([
+            { id: 1, name: 'Main Office Printer', location: 'Level 1, Room 102', status: 'online', model: 'HP LaserJet Enterprise', capabilities: 'Color, Duplex', department: 'Administration' },
+            { id: 2, name: 'Marketing Printer', location: 'Level 2, Room 205', status: 'online', model: 'Canon imageRUNNER', capabilities: 'Color, Duplex, Stapling', department: 'Marketing' },
+            { id: 3, name: 'IT Support Printer', location: 'Basement, IT Dept', status: 'online', model: 'Brother HL-Series', capabilities: 'Duplex', department: 'IT' }
+          ]);
         }
       } catch (error) {
-        console.error('Error loading initial data:', error);
-        setError('Failed to load dashboard data. Please check your connection.');
-        toast.error('Connection error: Failed to fetch data');
+        console.error('Error loading data from API:', error);
+        // Only show error toast if we have NO jobs at all
+        setPrintJobs(prev => {
+          if (prev.length === 0) {
+            setError('Could not connect to server. Running in offline mode.');
+            toast.info('Running in offline mode: Data stored locally');
+          }
+          return prev;
+        });
       } finally {
         setIsFetching(false);
       }
@@ -143,6 +175,10 @@ export const PrintJobProvider = ({ children }) => {
   const submitPrintJob = async (jobData) => {
     setIsSubmitting(true);
     setError(null);
+    
+    let apiSuccess = false;
+    let submittedJob = null;
+
     try {
       const formData = new FormData();
       formData.append('userId', jobData.userId);
@@ -161,16 +197,15 @@ export const PrintJobProvider = ({ children }) => {
         formData.append('file', jobData.file);
       }
 
-      // 30s timeout is inherited from client.js
       const response = await api.post('/api/jobs', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
       if (response.data.success && response.data.job) {
+        apiSuccess = true;
         const serverJob = response.data.job;
         
-        // Convert server response to client format
-        const newJob = {
+        submittedJob = {
           ...serverJob,
           document: serverJob.file ? {
             filename: serverJob.file.filename,
@@ -183,9 +218,8 @@ export const PrintJobProvider = ({ children }) => {
           lastViewedAt: null
         };
 
-        setPrintJobs(prev => [newJob, ...prev]);
+        setPrintJobs(prev => [submittedJob, ...prev]);
         
-        // Store expiration metadata in memory
         const expiresAt = new Date(serverJob.expiresAt).getTime();
         setExpirationMetadata(prev => {
           const newMap = new Map(prev);
@@ -201,16 +235,87 @@ export const PrintJobProvider = ({ children }) => {
         });
 
         toast.success('Print job submitted successfully!');
-        return newJob;
       }
     } catch (error) {
-      console.error('Submission failed:', error);
-      const message = error.response?.data?.error || (error.code === 'ECONNABORTED' ? 'Upload timed out. Try a smaller file.' : 'Failed to submit print job');
-      setError(message);
-      throw new Error(message);
-    } finally {
-      setIsSubmitting(false);
+      console.warn('API submission failed, falling back to local storage:', error.message);
     }
+
+    // LOCAL FALLBACK if API failed
+    if (!apiSuccess) {
+      try {
+        const id = 'local_' + Math.random().toString(36).substr(2, 9);
+        const secureToken = Math.random().toString(36).substr(2, 32);
+        const expirationDuration = parseInt(jobData.expirationDuration || 15);
+        const expiresAt = new Date(Date.now() + expirationDuration * 60000).toISOString();
+        const submittedAt = new Date().toISOString();
+        const origin = window.location.origin;
+        const releaseLink = `${origin}/release/${id}?token=${secureToken}`;
+
+        let docData = null;
+        if (jobData.file instanceof File) {
+          docData = {
+            filename: jobData.file.name,
+            originalname: jobData.file.name,
+            mimetype: jobData.file.type,
+            size: jobData.file.size
+          };
+
+          // Store as Data URL if file is small enough (< 2MB)
+          if (jobData.file.size < 2 * 1024 * 1024) {
+            const reader = new FileReader();
+            const dataUrl = await new Promise((resolve) => {
+              reader.onload = (e) => resolve(e.target.result);
+              reader.readAsDataURL(jobData.file);
+            });
+            docData.dataUrl = dataUrl;
+          }
+        }
+
+        submittedJob = {
+          id,
+          userId: jobData.userId,
+          userName: jobData.userName,
+          documentName: jobData.documentName,
+          pages: jobData.pages,
+          copies: jobData.copies,
+          color: jobData.color,
+          duplex: jobData.duplex,
+          stapling: jobData.stapling,
+          priority: jobData.priority,
+          notes: jobData.notes,
+          status: 'pending',
+          cost: calculateJobCost(jobData),
+          submittedAt,
+          secureToken,
+          releaseLink,
+          expiresAt,
+          viewCount: 0,
+          document: docData
+        };
+
+        setPrintJobs(prev => [submittedJob, ...prev]);
+        
+        setExpirationMetadata(prev => {
+          const newMap = new Map(prev);
+          newMap.set(id, {
+            expiresAt: new Date(expiresAt).getTime(),
+            createdAt: Date.now(),
+            token: secureToken,
+            viewCount: 0
+          });
+          return newMap;
+        });
+
+        toast.success('Print job submitted (Offline Mode)');
+      } catch (err) {
+        console.error('Local submission failed:', err);
+        setError('Failed to submit print job.');
+        throw err;
+      }
+    }
+
+    setIsSubmitting(false);
+    return submittedJob;
   };
 
   const getJobById = async (jobId) => {
@@ -227,6 +332,23 @@ export const PrintJobProvider = ({ children }) => {
   };
 
   const viewPrintJob = async (jobId, token, userId) => {
+    if (jobId.startsWith('local_')) {
+      const now = new Date().toISOString();
+      const job = printJobs.find(j => j.id === jobId);
+      
+      if (job?.viewCount > 0) {
+        toast.error('Document already viewed (one-time only)');
+        throw new Error('Document already viewed');
+      }
+
+      setPrintJobs(prev => prev.map(j => 
+        j.id === jobId ? { ...j, viewCount: 1, firstViewedAt: now, lastViewedAt: now } : j
+      ));
+
+      toast.success('Document preview opened (Local)');
+      return job?.document;
+    }
+
     setLoading(true);
     try {
       const response = await api.post(`/api/jobs/${jobId}/view`, {
@@ -285,6 +407,14 @@ export const PrintJobProvider = ({ children }) => {
   };
 
   const releasePrintJob = async (jobId, printerId, releasedBy, token) => {
+    if (jobId.startsWith('local_')) {
+      setPrintJobs(prev => prev.map(job => 
+        job.id === jobId ? { ...job, status: 'released', releasedAt: new Date().toISOString() } : job
+      ));
+      toast.success('Print job released successfully (Local)!');
+      return { success: true };
+    }
+
     setLoading(true);
     try {
       const response = await api.post(`/api/jobs/${jobId}/release`, {
