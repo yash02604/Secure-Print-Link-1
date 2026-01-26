@@ -23,11 +23,11 @@ code {
 /* Mobile-first responsive design system */
 :root {
   /* Breakpoints */
-  --breakpoint-xs: 0px;      /* Extra small devices (portrait phones) */
-  --breakpoint-sm: 576px;    /* Small devices (landscape phones) */
-  --breakpoint-md: 768px;    /* Medium devices (tablets) */
-  --breakpoint-lg: 992px;    /* Large devices (desktops) */
-  --breakpoint-xl: 1200px;   /* Extra large devices (large desktops) */
+  --breakpoint-xs: 0px;
+  --breakpoint-sm: 576px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 992px;
+  --breakpoint-xl: 1200px;
   
   /* Spacing */
   --spacing-xs: 4px;
@@ -37,44 +37,45 @@ code {
   --spacing-xl: 32px;
   --spacing-xxl: 48px;
   
-  /* Colors */
-  --primary-color: #3498db;
-  --secondary-color: #2c3e50;
-  --success-color: #27ae60;
-  --warning-color: #f39c12;
-  --error-color: #e74c3c;
-  --text-primary: #2c3e50;
-  --text-secondary: #7f8c8d;
-  --text-light: #95a5a6;
-  --background-light: #f8f9fa;
+  /* Colors - Modern SaaS Palette */
+  --primary-color: #4f46e5; /* Indigo 600 */
+  --primary-hover: #4338ca; /* Indigo 700 */
+  --secondary-color: #1e293b; /* Slate 800 */
+  --success-color: #10b981; /* Emerald 500 */
+  --warning-color: #f59e0b; /* Amber 500 */
+  --error-color: #ef4444; /* Red 500 */
+  --text-primary: #0f172a; /* Slate 900 */
+  --text-secondary: #475569; /* Slate 600 */
+  --text-light: #94a3b8; /* Slate 400 */
+  --background-light: #f8fafc; /* Slate 50 */
   --background-card: #ffffff;
-  --border-color: #e1e5e9;
+  --border-color: #e2e8f0; /* Slate 200 */
   
   /* Typography */
-  --font-size-xs: 12px;
-  --font-size-sm: 14px;
-  --font-size-md: 16px;
-  --font-size-lg: 18px;
-  --font-size-xl: 20px;
-  --font-size-xxl: 24px;
-  --font-size-xxxl: 28px;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-xxl: 1.5rem;
+  --font-size-xxxl: 1.875rem;
   
   /* Shadows */
-  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
-  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.1);
-  --shadow-xl: 0 16px 32px rgba(0, 0, 0, 0.1);
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
   
   /* Border radius */
-  --border-radius-sm: 4px;
-  --border-radius-md: 8px;
-  --border-radius-lg: 12px;
-  --border-radius-xl: 16px;
+  --border-radius-sm: 0.375rem;
+  --border-radius-md: 0.5rem;
+  --border-radius-lg: 0.75rem;
+  --border-radius-xl: 1rem;
   
   /* Transitions */
-  --transition-fast: 0.15s ease;
-  --transition-normal: 0.3s ease;
-  --transition-slow: 0.5s ease;
+  --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Global responsive container */

@@ -14,102 +14,87 @@ const EmptyStateContainer = styled.div`
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 20px;
+  padding: 64px 24px;
   text-align: center;
-  color: #7f8c8d;
-  min-height: 300px;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-  
-  @media (max-width: 768px) {
-    padding: 30px 16px;
-    min-height: 250px;
-  }
+  color: var(--text-secondary);
+  background: var(--background-card);
+  border-radius: var(--border-radius-lg);
+  border: 1px dashed var(--border-color);
+  width: 100%;
 `;
 
 const IconWrapper = styled.div`
-  font-size: 64px;
-  margin-bottom: 20px;
-  color: ${props => props.color || '#bdc3c7'};
-  
-  @media (max-width: 768px) {
-    font-size: 48px;
-    margin-bottom: 16px;
-  }
+  font-size: 56px;
+  margin-bottom: 24px;
+  color: ${props => props.color || 'var(--text-light)'};
+  opacity: 0.8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 96px;
+  background: ${props => props.color || 'var(--primary-color)'}10;
+  border-radius: 50%;
 `;
 
 const Title = styled.h3`
-  font-size: 20px;
-  font-weight: 600;
+  font-size: var(--font-size-xl);
+  font-weight: 700;
   margin-bottom: 12px;
-  color: #2c3e50;
-  
-  @media (max-width: 768px) {
-    font-size: 18px;
-    margin-bottom: 8px;
-  }
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
 `;
 
 const Description = styled.p`
-  font-size: 16px;
-  line-height: 1.5;
-  max-width: 400px;
-  margin-bottom: 24px;
-  color: #7f8c8d;
-  
-  @media (max-width: 768px) {
-    font-size: 14px;
-    margin-bottom: 20px;
-  }
+  font-size: var(--font-size-md);
+  line-height: 1.6;
+  max-width: 440px;
+  margin-bottom: 32px;
+  color: var(--text-secondary);
 `;
 
 const ActionButton = styled.button`
-  background: #3498db;
+  background: var(--primary-color);
   color: white;
   border: none;
-  padding: 12px 24px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
+  padding: 12px 28px;
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--transition-fast);
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  box-shadow: var(--shadow-md);
   
   &:hover {
-    background: #2980b9;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+    background: var(--primary-hover);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
   }
   
   &:active {
     transform: translateY(0);
-  }
-  
-  @media (max-width: 768px) {
-    padding: 10px 20px;
-    font-size: 13px;
   }
 `;
 
 const getIconAndColor = (type) => {
   switch (type) {
     case 'jobs':
-      return { icon: <FaFileAlt />, color: '#3498db' };
+      return { icon: <FaFileAlt />, color: 'var(--primary-color)' };
     case 'expired':
-      return { icon: <FaClock />, color: '#f39c12' };
+      return { icon: <FaClock />, color: 'var(--warning-color)' };
     case 'error':
-      return { icon: <FaExclamationTriangle />, color: '#e74c3c' };
+      return { icon: <FaExclamationTriangle />, color: 'var(--error-color)' };
     case 'search':
-      return { icon: <FaSearch />, color: '#95a5a6' };
+      return { icon: <FaSearch />, color: 'var(--text-light)' };
     case 'print':
-      return { icon: <FaPrint />, color: '#27ae60' };
+      return { icon: <FaPrint />, color: 'var(--success-color)' };
     case 'users':
-      return { icon: <FaUser />, color: '#9b59b6' };
+      return { icon: <FaUser />, color: '#8b5cf6' };
     default:
-      return { icon: <FaFileAlt />, color: '#bdc3c7' };
+      return { icon: <FaFileAlt />, color: 'var(--text-light)' };
   }
 };
 

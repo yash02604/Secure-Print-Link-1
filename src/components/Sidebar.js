@@ -18,22 +18,25 @@ import {
 } from 'react-icons/fa';
 
 const SidebarContainer = styled.aside`
-  background: #2c3e50;
+  background: var(--secondary-color);
   color: white;
-  width: ${props => props.isOpen ? '250px' : '60px'};
+  width: ${props => props.isOpen ? '260px' : '80px'};
   height: 100vh;
-  transition: width 0.3s ease;
+  transition: all var(--transition-normal);
   overflow: hidden;
-  position: relative;
-  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-lg);
   z-index: 900;
   
   @media (max-width: 768px) {
     position: fixed;
     top: 0;
-    left: ${props => props.isOpen ? '0' : '-250px'};
-    width: 250px;
-    transition: left 0.3s ease;
+    left: ${props => props.isOpen ? '0' : '-260px'};
+    width: 260px;
+    height: 100vh;
     z-index: 1000;
   }
 `;
@@ -48,30 +51,32 @@ const Overlay = styled.div`
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(15, 23, 42, 0.5);
+    backdrop-filter: blur(4px);
     z-index: 999;
   }
 `;
 
 const ToggleButton = styled.button`
   position: absolute;
-  top: 20px;
-  right: ${props => props.isOpen ? '-15px' : '-15px'};
-  background: #34495e;
+  top: 24px;
+  right: 12px;
+  background: rgba(255, 255, 255, 0.1);
   border: none;
   color: white;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--border-radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   z-index: 10;
-  transition: background-color 0.2s;
+  transition: all var(--transition-fast);
   
   &:hover {
-    background: #4a5f7a;
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.05);
   }
   
   @media (max-width: 768px) {
@@ -82,24 +87,24 @@ const ToggleButton = styled.button`
 const MobileToggleButton = styled.button`
   display: none;
   position: fixed;
-  top: 15px;
-  left: 15px;
-  background: #3498db;
+  top: 12px;
+  left: 12px;
+  background: var(--primary-color);
   border: none;
   color: white;
   width: 40px;
   height: 40px;
-  border-radius: 50%;
+  border-radius: var(--border-radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   z-index: 1001;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  transition: all 0.2s ease;
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition-fast);
   
   &:hover {
-    background: #2980b9;
+    background: var(--primary-hover);
     transform: scale(1.05);
   }
   
@@ -111,20 +116,20 @@ const MobileToggleButton = styled.button`
 const CloseButton = styled.button`
   display: none;
   position: absolute;
-  top: 15px;
-  right: 15px;
+  top: 20px;
+  right: 20px;
   background: transparent;
   border: none;
   color: white;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   z-index: 10;
-  transition: background-color 0.2s;
+  transition: background-color var(--transition-fast);
   
   &:hover {
     background: rgba(255, 255, 255, 0.1);
@@ -136,23 +141,25 @@ const CloseButton = styled.button`
 `;
 
 const LogoSection = styled.div`
-  padding: 20px;
-  border-bottom: 1px solid #34495e;
+  padding: 32px 24px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  margin-bottom: 8px;
   
   .logo-icon {
-    font-size: 24px;
-    color: #3498db;
+    font-size: 28px;
+    color: var(--primary-color);
+    flex-shrink: 0;
   }
   
   .logo-text {
-    font-size: 18px;
-    font-weight: bold;
+    font-size: 1.25rem;
+    font-weight: 700;
     white-space: nowrap;
+    letter-spacing: -0.025em;
     opacity: ${props => props.isOpen ? '1' : '0'};
-    transition: opacity 0.3s ease;
+    transition: opacity var(--transition-normal);
   }
   
   @media (max-width: 768px) {
@@ -163,9 +170,9 @@ const LogoSection = styled.div`
 `;
 
 const NavMenu = styled.nav`
-  padding: 20px 0;
+  padding: 0 12px;
+  flex: 1;
   overflow-y: auto;
-  max-height: calc(100vh - 200px);
   
   &::-webkit-scrollbar {
     width: 4px;
@@ -176,23 +183,23 @@ const NavMenu = styled.nav`
   }
   
   &::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.1);
     border-radius: 2px;
   }
 `;
 
 const NavSection = styled.div`
-  margin-bottom: 20px;
+  margin-bottom: 24px;
   
   .section-title {
-    padding: 0 20px 10px;
-    font-size: 12px;
+    padding: 0 16px 12px;
+    font-size: 0.75rem;
     text-transform: uppercase;
-    color: #95a5a6;
+    color: var(--text-light);
     font-weight: 600;
-    letter-spacing: 1px;
+    letter-spacing: 0.05em;
     opacity: ${props => props.isOpen ? '1' : '0'};
-    transition: opacity 0.3s ease;
+    transition: opacity var(--transition-normal);
   }
   
   @media (max-width: 768px) {
@@ -205,43 +212,38 @@ const NavSection = styled.div`
 const NavItem = styled(NavLink)`
   display: flex;
   align-items: center;
-  gap: 15px;
-  padding: 12px 20px;
-  color: #bdc3c7;
+  gap: 12px;
+  padding: 12px 16px;
+  color: var(--text-light);
   text-decoration: none;
-  transition: all 0.2s;
-  position: relative;
+  border-radius: var(--border-radius-md);
+  transition: all var(--transition-fast);
+  margin-bottom: 4px;
   white-space: nowrap;
   
   &:hover {
-    background: #34495e;
+    background: rgba(255, 255, 255, 0.05);
     color: white;
   }
   
   &.active {
-    background: #3498db;
+    background: var(--primary-color);
     color: white;
-    
-    &::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      width: 4px;
-      background: #2ecc71;
-    }
+    box-shadow: var(--shadow-md);
   }
   
   .nav-icon {
-    font-size: 18px;
+    font-size: 20px;
     min-width: 20px;
     text-align: center;
+    flex-shrink: 0;
   }
   
   .nav-text {
+    font-size: 0.9375rem;
+    font-weight: 500;
     opacity: ${props => props.isOpen ? '1' : '0'};
-    transition: opacity 0.3s ease;
+    transition: opacity var(--transition-normal);
   }
   
   @media (max-width: 768px) {
@@ -252,55 +254,53 @@ const NavItem = styled(NavLink)`
 `;
 
 const UserSection = styled.div`
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
   padding: 20px;
-  border-top: 1px solid #34495e;
-  background: #34495e;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.1);
   
   .user-info {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 10px;
+    gap: 12px;
   }
   
   .user-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: #3498db;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--border-radius-md);
+    background: var(--primary-color);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
-    font-weight: bold;
+    font-size: 16px;
+    font-weight: 600;
     flex-shrink: 0;
+    box-shadow: var(--shadow-sm);
   }
   
   .user-details {
     opacity: ${props => props.isOpen ? '1' : '0'};
-    transition: opacity 0.3s ease;
+    transition: opacity var(--transition-normal);
     min-width: 0;
     overflow: hidden;
   }
   
   .user-name {
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 0.875rem;
+    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    color: white;
   }
   
   .user-role {
-    font-size: 12px;
-    color: #95a5a6;
+    font-size: 0.75rem;
+    color: var(--text-light);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-transform: capitalize;
   }
   
   @media (max-width: 768px) {

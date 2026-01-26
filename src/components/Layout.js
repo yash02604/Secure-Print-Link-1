@@ -1,38 +1,36 @@
 import React, { useState, useEffect } from 'react';
+import styled from 'styled-components';
 import Header from './Header';
 import Sidebar from './Sidebar';
 
-const layoutStyle = {
-  display: 'flex',
-  minHeight: '100vh',
-};
+const LayoutContainer = styled.div`
+  display: flex;
+  min-height: 100vh;
+  background: var(--background-light);
+`;
 
-const mainStyle = {
-  flex: 1,
-  padding: '24px',
-  background: '#f5f7fa',
-  transition: 'margin-left 0.3s ease',
-  overflow: 'auto',
-};
-
-const mobileMainStyle = {
-  flex: 1,
-  padding: '16px',
-  background: '#f5f7fa',
-  marginTop: '60px', // Account for fixed header
-  minHeight: 'calc(100vh - 60px)',
-  overflow: 'auto',
-};
+const MainContent = styled.main`
+  flex: 1;
+  padding: 32px;
+  padding-top: 96px; /* Header height (64px) + spacing (32px) */
+  transition: all var(--transition-normal);
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  
+  @media (max-width: 768px) {
+    padding: 16px;
+    padding-top: 80px; /* Header height (64px) + spacing (16px) */
+  }
+`;
 
 const Layout = ({ children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [isMobile, setIsMobile] = useState(false);
 
-  // Check if device is mobile
+  // Check if device is mobile to set initial sidebar state
   useEffect(() => {
     const checkMobile = () => {
       const mobile = window.innerWidth <= 768;
-      setIsMobile(mobile);
       if (mobile) {
         setSidebarOpen(false); // Start with closed sidebar on mobile
       } else {
@@ -55,15 +53,13 @@ const Layout = ({ children }) => {
   };
 
   return (
-    <div>
-      <Header onMenuToggle={toggleSidebar} />
-      <div style={layoutStyle}>
-        <Sidebar isOpen={sidebarOpen} onToggle={toggleSidebar} />
-        <main style={isMobile ? mobileMainStyle : { ...mainStyle, marginLeft: sidebarOpen ? '250px' : '60px' }}>
-          {children}
-        </main>
-      </div>
-    </div>
+    <LayoutContainer>
+      <Header onMenuToggle={() => toggleSidebar()} />
+      <Sidebar isOpen={sidebarOpen} onToggle={toggleSidebar} />
+      <MainContent>
+        {children}
+      </MainContent>
+    </LayoutContainer>
   );
 };
 

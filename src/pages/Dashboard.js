@@ -3,117 +3,135 @@ import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import { useAuth } from '../context/AuthContext';
 import { usePrintJob } from '../context/PrintJobContext';
-import { FaPrint, FaFileAlt, FaServer, FaChartBar, FaCog, FaClock, FaCheckCircle, FaExclamationTriangle, FaList } from 'react-icons/fa';
+import { FaPrint, FaFileAlt, FaServer, FaChartBar, FaCog, FaClock, FaCheckCircle, FaExclamationTriangle, FaEye } from 'react-icons/fa';
 import EmptyState from '../components/EmptyState';
 
 const DashboardContainer = styled.div`
-  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xl);
 `;
 
 const PageHeader = styled.div`
-  margin-bottom: 30px;
-  
   h1 {
-    font-size: 28px;
-    font-weight: bold;
-    color: #2c3e50;
-    margin-bottom: 8px;
+    font-size: var(--font-size-xxxl);
+    font-weight: 800;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-xs);
+    letter-spacing: -0.025em;
   }
   
   p {
-    color: #7f8c8d;
-    font-size: 16px;
+    color: var(--text-secondary);
+    font-size: var(--font-size-md);
   }
 `;
 
 const StatsGrid = styled.div`
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 20px;
-  margin-bottom: 30px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--spacing-lg);
 `;
 
 const StatCard = styled.div`
-  background: white;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-  border-left: 4px solid ${props => props.color || '#3498db'};
-  transition: transform 0.2s ease;
+  background: var(--background-card);
+  border-radius: var(--border-radius-lg);
+  padding: var(--spacing-lg);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-lg);
+  transition: all var(--transition-normal);
   
   &:hover {
     transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--primary-color);
   }
   
   .stat-icon {
-    width: 50px;
-    height: 50px;
-    border-radius: 12px;
-    background: ${props => props.color || '#3498db'}20;
+    width: 48px;
+    height: 48px;
+    border-radius: var(--border-radius-md);
+    background: ${props => props.color || 'var(--primary-color)'}15;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: ${props => props.color || '#3498db'};
-    font-size: 24px;
+    color: ${props => props.color || 'var(--primary-color)'};
+    font-size: 20px;
+    flex-shrink: 0;
   }
   
   .stat-info {
     .stat-value {
-      font-size: 32px;
-      font-weight: bold;
-      color: #2c3e50;
-      margin-bottom: 8px;
+      font-size: var(--font-size-xxl);
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.2;
     }
     
     .stat-label {
-      color: #7f8c8d;
-      font-size: 14px;
+      color: var(--text-secondary);
+      font-size: var(--font-size-sm);
+      font-weight: 500;
     }
   }
 `;
 
 const ContentGrid = styled.div`
   display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 30px;
+  grid-template-columns: repeat(12, 1fr);
+  gap: var(--spacing-xl);
   
-  @media (max-width: 1024px) {
+  @media (max-width: 1200px) {
     grid-template-columns: 1fr;
   }
 `;
 
 const MainContent = styled.div`
+  grid-column: span 8;
   display: flex;
   flex-direction: column;
-  gap: 30px;
+  gap: var(--spacing-xl);
+  
+  @media (max-width: 1200px) {
+    grid-column: span 12;
+  }
 `;
 
-const Section = styled.div`
-  background: white;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+const Section = styled.section`
+  background: var(--background-card);
+  border-radius: var(--border-radius-lg);
+  padding: var(--spacing-xl);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-color);
   
   .section-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 20px;
+    margin-bottom: var(--spacing-xl);
     
     h2 {
-      font-size: 20px;
-      font-weight: 600;
-      color: #2c3e50;
+      font-size: var(--font-size-xl);
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.025em;
     }
     
     .view-all {
-      color: #3498db;
+      color: var(--primary-color);
       text-decoration: none;
-      font-size: 14px;
-      font-weight: 500;
+      font-size: var(--font-size-sm);
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: var(--border-radius-md);
+      transition: all var(--transition-fast);
       
       &:hover {
-        text-decoration: underline;
+        background: var(--background-light);
+        color: var(--primary-hover);
       }
     }
   }
@@ -122,185 +140,233 @@ const Section = styled.div`
 const JobList = styled.div`
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--spacing-md);
 `;
 
 const JobItem = styled.div`
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px;
-  border: 1px solid #ecf0f1;
-  border-radius: 8px;
-  transition: background-color 0.2s ease;
+  padding: var(--spacing-md);
+  background: var(--background-light);
+  border-radius: var(--border-radius-md);
+  border: 1px solid transparent;
+  transition: all var(--transition-fast);
   
   &:hover {
-    background-color: #f8f9fa;
+    background: white;
+    border-color: var(--border-color);
+    box-shadow: var(--shadow-sm);
+    transform: translateX(4px);
   }
   
   .job-info {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--spacing-md);
     
     .job-icon {
       width: 40px;
       height: 40px;
-      border-radius: 8px;
-      background: #3498db20;
+      border-radius: var(--border-radius-sm);
+      background: white;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #3498db;
+      color: var(--primary-color);
+      box-shadow: var(--shadow-sm);
     }
     
     .job-details {
       .job-name {
-        font-weight: 500;
-        color: #2c3e50;
-        margin-bottom: 4px;
+        font-weight: 600;
+        color: var(--text-primary);
+        font-size: var(--font-size-md);
+        margin-bottom: 2px;
       }
       
       .job-meta {
-        font-size: 12px;
-        color: #7f8c8d;
+        font-size: var(--font-size-xs);
+        color: var(--text-secondary);
       }
     }
   }
   
   .job-status {
-    padding: 6px 12px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 500;
+    padding: 4px 12px;
+    border-radius: 9999px;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    text-transform: capitalize;
     
-    &.pending {
-      background: #fff3cd;
-      color: #856404;
-    }
-    
-    &.printing {
-      background: #d1ecf1;
-      color: #0c5460;
-    }
-    
-    &.completed {
-      background: #d4edda;
-      color: #155724;
-    }
-    
-    &.cancelled {
-      background: #f8d7da;
-      color: #721c24;
-    }
+    &.pending { background: #fef3c7; color: #92400e; }
+    &.printing { background: #e0f2fe; color: #075985; }
+    &.completed { background: #dcfce7; color: #166534; }
+    &.cancelled { background: #fee2e2; color: #991b1b; }
   }
 `;
 
 const PrinterGrid = styled.div`
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--spacing-md);
 `;
 
 const PrinterCard = styled.div`
-  border: 1px solid #ecf0f1;
-  border-radius: 8px;
-  padding: 16px;
+  background: var(--background-light);
+  border-radius: var(--border-radius-md);
+  padding: var(--spacing-lg);
   text-align: center;
+  border: 1px solid transparent;
+  transition: all var(--transition-fast);
+  
+  &:hover {
+    background: white;
+    border-color: var(--border-color);
+    box-shadow: var(--shadow-sm);
+  }
   
   .printer-icon {
-    width: 50px;
-    height: 50px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
-    background: ${props => props.status === 'online' ? '#d4edda' : '#f8d7da'};
-    color: ${props => props.status === 'online' ? '#155724' : '#721c24'};
+    background: white;
+    color: ${props => props.status === 'online' ? 'var(--success-color)' : 'var(--error-color)'};
     display: flex;
     align-items: center;
     justify-content: center;
-    margin: 0 auto 12px;
+    margin: 0 auto var(--spacing-md);
     font-size: 20px;
+    box-shadow: var(--shadow-sm);
   }
   
   .printer-name {
-    font-weight: 500;
-    color: #2c3e50;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
     margin-bottom: 4px;
   }
   
   .printer-status {
-    font-size: 12px;
-    color: ${props => props.status === 'online' ? '#27ae60' : '#e74c3c'};
-    font-weight: 500;
+    font-size: var(--font-size-xs);
+    color: ${props => props.status === 'online' ? 'var(--success-color)' : 'var(--error-color)'};
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
   }
 `;
 
 const QuickActions = styled.div`
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--spacing-md);
 `;
 
 const ActionButton = styled.button`
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 16px 20px;
-  background: white;
-  border: 2px solid #ecf0f1;
-  border-radius: 12px;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: var(--background-light);
+  border: 1px solid transparent;
+  border-radius: var(--border-radius-md);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--transition-fast);
   text-align: left;
+  width: 100%;
   
   &:hover {
-    border-color: #3498db;
-    background: #f8f9fa;
+    background: white;
+    border-color: var(--primary-color);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
   }
   
   .action-icon {
     width: 40px;
     height: 40px;
-    border-radius: 8px;
-    background: #3498db20;
+    border-radius: var(--border-radius-sm);
+    background: var(--primary-color);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #3498db;
+    color: white;
     font-size: 18px;
+    flex-shrink: 0;
   }
   
   .action-text {
-    flex: 1;
-    
     .action-title {
-      font-weight: 500;
-      color: #2c3e50;
-      margin-bottom: 4px;
+      font-weight: 600;
+      color: var(--text-primary);
+      font-size: var(--font-size-sm);
+      margin-bottom: 2px;
     }
     
     .action-description {
-      font-size: 12px;
-      color: #7f8c8d;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
     }
   }
 `;
 
 const ChartPlaceholder = styled.div`
-  height: 200px;
-  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-  border-radius: 8px;
+  height: 240px;
+  background: var(--background-light);
+  border-radius: var(--border-radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #6c757d;
-  font-size: 16px;
+  border: 1px dashed var(--border-color);
+`;
+
+const SidebarContent = styled.div`
+  grid-column: span 4;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xl);
+  
+  @media (max-width: 1200px) {
+    grid-column: span 12;
+  }
+`;
+
+const SystemStatus = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  
+  .status-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-sm) 0;
+    border-bottom: 1px solid var(--border-color);
+    
+    &:last-child {
+      border-bottom: none;
+    }
+    
+    .status-label {
+      font-size: var(--font-size-sm);
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    
+    .status-value {
+      font-size: var(--font-size-sm);
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+  }
 `;
 
 const Dashboard = () => {
   const { currentUser } = useAuth();
-  const { printJobs, getJobStatistics } = usePrintJob();
+  const { printJobs, getJobStatistics, printers: allPrinters } = usePrintJob();
   const navigate = useNavigate();
   const [userJobs, setUserJobs] = useState([]);
+  const [printers, setPrinters] = useState([]);
   const [stats, setStats] = useState({
     total: 0,
     pending: 0,
@@ -321,7 +387,14 @@ const Dashboard = () => {
       const jobStats = getJobStatistics(currentUser.id);
       setStats(jobStats);
     }
-  }, [printJobs, currentUser, getJobStatistics]);
+    
+    if (allPrinters) {
+      setPrinters(allPrinters);
+    }
+  }, [printJobs, currentUser, getJobStatistics, allPrinters]);
+
+  const onlinePrinters = printers.filter(p => p.status === 'online');
+  const offlinePrinters = printers.filter(p => p.status === 'offline');
 
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -340,8 +413,8 @@ const Dashboard = () => {
       </PageHeader>
 
       <StatsGrid>
-        <StatCard>
-          <div className="stat-icon total">
+        <StatCard color="var(--primary-color)">
+          <div className="stat-icon">
             <FaFileAlt />
           </div>
           <div className="stat-info">
@@ -350,8 +423,8 @@ const Dashboard = () => {
           </div>
         </StatCard>
 
-        <StatCard>
-          <div className="stat-icon pending">
+        <StatCard color="var(--warning-color)">
+          <div className="stat-icon">
             <FaClock />
           </div>
           <div className="stat-info">
@@ -360,8 +433,8 @@ const Dashboard = () => {
           </div>
         </StatCard>
 
-        <StatCard>
-          <div className="stat-icon released">
+        <StatCard color="var(--primary-hover)">
+          <div className="stat-icon">
             <FaPrint />
           </div>
           <div className="stat-info">
@@ -370,8 +443,8 @@ const Dashboard = () => {
           </div>
         </StatCard>
 
-        <StatCard>
-          <div className="stat-icon completed">
+        <StatCard color="var(--success-color)">
+          <div className="stat-icon">
             <FaCheckCircle />
           </div>
           <div className="stat-info">
@@ -380,8 +453,8 @@ const Dashboard = () => {
           </div>
         </StatCard>
 
-        <StatCard>
-          <div className="stat-icon viewed">
+        <StatCard color="#8b5cf6">
+          <div className="stat-icon">
             <FaEye />
           </div>
           <div className="stat-info">
@@ -390,8 +463,8 @@ const Dashboard = () => {
           </div>
         </StatCard>
 
-        <StatCard>
-          <div className="stat-icon expired">
+        <StatCard color="var(--error-color)">
+          <div className="stat-icon">
             <FaExclamationTriangle />
           </div>
           <div className="stat-info">
@@ -445,7 +518,7 @@ const Dashboard = () => {
               <a href="/printers" className="view-all">Manage Printers</a>
             </div>
             <PrinterGrid>
-              {printJobs.map(printer => (
+              {printers.map(printer => (
                 <PrinterCard key={printer.id} status={printer.status}>
                   <div className="printer-icon">
                     <FaServer />
@@ -525,24 +598,24 @@ const Dashboard = () => {
             <div className="section-header">
               <h2>System Status</h2>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>Online Printers</span>
-                <span style={{ color: '#27ae60', fontWeight: '500' }}>{onlinePrinters.length}</span>
+            <SystemStatus>
+              <div className="status-item">
+                <span className="status-label">Online Printers</span>
+                <span className="status-value" style={{ color: 'var(--success-color)' }}>{onlinePrinters.length}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>Offline Printers</span>
-                <span style={{ color: '#e74c3c', fontWeight: '500' }}>{offlinePrinters.length}</span>
+              <div className="status-item">
+                <span className="status-label">Offline Printers</span>
+                <span className="status-value" style={{ color: 'var(--error-color)' }}>{offlinePrinters.length}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>Active Users</span>
-                <span style={{ color: '#3498db', fontWeight: '500' }}>24</span>
+              <div className="status-item">
+                <span className="status-label">Active Users</span>
+                <span className="status-value" style={{ color: 'var(--primary-color)' }}>24</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>System Health</span>
-                <span style={{ color: '#27ae60', fontWeight: '500' }}>Excellent</span>
+              <div className="status-item">
+                <span className="status-label">System Health</span>
+                <span className="status-value" style={{ color: 'var(--success-color)' }}>Excellent</span>
               </div>
-            </div>
+            </SystemStatus>
           </Section>
         </SidebarContent>
       </ContentGrid>

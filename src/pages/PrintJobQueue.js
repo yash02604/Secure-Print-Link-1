@@ -15,229 +15,198 @@ import {
   FaClock,
   FaFileAlt,
   FaSearch,
-  FaSort,
-  FaDownload,
-  FaInfoCircle
+  FaSort
 } from 'react-icons/fa';
 
 const QueueContainer = styled.div`
-  padding: 20px;
-  max-width: 1400px;
-  margin: 0 auto;
-  
-  @media (max-width: 768px) {
-    padding: 16px;
-  }
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xl);
 `;
 
 const PageHeader = styled.div`
-  margin-bottom: 30px;
-  
   h1 {
-    font-size: 28px;
-    font-weight: bold;
-    color: #2c3e50;
-    margin-bottom: 8px;
+    font-size: var(--font-size-xxxl);
+    font-weight: 800;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-xs);
+    letter-spacing: -0.025em;
   }
   
   p {
-    color: #7f8c8d;
-    font-size: 16px;
-  }
-  
-  @media (max-width: 768px) {
-    h1 {
-      font-size: 24px;
-    }
-    
-    p {
-      font-size: 14px;
-    }
+    color: var(--text-secondary);
+    font-size: var(--font-size-md);
   }
 `;
 
 const ControlsSection = styled.div`
-  background: white;
-  border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-  margin-bottom: 20px;
-  
-  @media (max-width: 768px) {
-    padding: 16px;
-  }
+  background: var(--background-card);
+  border-radius: var(--border-radius-lg);
+  padding: var(--spacing-xl);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-color);
 `;
 
 const ControlsGrid = styled.div`
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
-  align-items: end;
-  
-  @media (max-width: 768px) {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--spacing-lg);
+  align-items: flex-end;
 `;
 
 const ControlGroup = styled.div`
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--spacing-sm);
   
   label {
-    font-weight: 500;
-    color: #333;
-    font-size: 14px;
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-primary);
   }
   
-  input, select {
-    padding: 10px;
-    border: 2px solid #e1e5e9;
-    border-radius: 8px;
-    font-size: 14px;
-    transition: border-color 0.2s;
+  .input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
     
-    &:focus {
-      border-color: #3498db;
-      outline: none;
+    .input-icon {
+      position: absolute;
+      left: 12px;
+      color: var(--text-light);
+      font-size: 14px;
     }
     
-    @media (max-width: 768px) {
-      padding: 8px;
-      font-size: 13px;
+    input, select {
+      width: 100%;
+      padding: 10px 12px;
+      padding-left: ${props => props.hasIcon ? '36px' : '12px'};
+      background: var(--background-light);
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius-md);
+      font-size: var(--font-size-sm);
+      color: var(--text-primary);
+      transition: all var(--transition-fast);
+      
+      &:focus {
+        border-color: var(--primary-color);
+        background: white;
+        box-shadow: 0 0 0 3px var(--primary-color)15;
+      }
     }
   }
 `;
 
 const SortSection = styled.div`
   display: flex;
-  gap: 8px;
   align-items: center;
+  gap: var(--spacing-sm);
   flex-wrap: wrap;
+  
+  .sort-label {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-right: var(--spacing-xs);
+  }
 `;
 
 const SortButton = styled.button`
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border: 1px solid #e1e5e9;
-  border-radius: 6px;
-  background: white;
-  color: #333;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s ease;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--background-light);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  transition: all var(--transition-fast);
   
   &:hover {
-    background: #f8f9fa;
+    background: white;
+    border-color: var(--primary-color);
+    color: var(--primary-color);
   }
   
   &.active {
-    background: #3498db;
+    background: var(--primary-color);
     color: white;
-    border-color: #3498db;
-  }
-  
-  @media (max-width: 768px) {
-    padding: 6px 10px;
-    font-size: 12px;
+    border-color: var(--primary-color);
+    box-shadow: var(--shadow-sm);
   }
 `;
 
 const JobsContainer = styled.div`
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  background: var(--background-card);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-color);
   overflow: hidden;
-  
-  @media (max-width: 768px) {
-    border-radius: 8px;
-  }
 `;
 
 const JobList = styled.div`
   display: flex;
   flex-direction: column;
-  max-height: 600px;
-  overflow-y: auto;
-  
-  &::-webkit-scrollbar {
-    width: 8px;
-  }
-  
-  &::-webkit-scrollbar-track {
-    background: #f1f1f1;
-  }
-  
-  &::-webkit-scrollbar-thumb {
-    background: #c1c1c1;
-    border-radius: 4px;
-  }
-  
-  &::-webkit-scrollbar-thumb:hover {
-    background: #a8a8a8;
-  }
 `;
 
 const JobItem = styled.div`
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  padding: 16px 20px;
-  border-bottom: 1px solid #ecf0f1;
-  transition: background-color 0.2s;
+  gap: var(--spacing-xl);
+  padding: var(--spacing-lg) var(--spacing-xl);
+  border-bottom: 1px solid var(--border-color);
+  transition: all var(--transition-fast);
   
   &:hover {
-    background-color: #f8f9fa;
+    background: var(--background-light);
   }
   
   &:last-child {
     border-bottom: none;
   }
   
-  @media (max-width: 768px) {
-    flex-direction: column;
-    align-items: flex-start;
-    padding: 12px 16px;
-    gap: 12px;
+  @media (max-width: 992px) {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg);
   }
 `;
 
 const JobInfo = styled.div`
-  flex: 1;
   min-width: 0;
   
-  @media (max-width: 768px) {
-    width: 100%;
+  .job-title {
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    letter-spacing: -0.01em;
   }
-`;
-
-const JobTitle = styled.div`
-  font-weight: 600;
-  color: #2c3e50;
-  margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   
-  @media (max-width: 768px) {
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-  }
-`;
-
-const JobDetails = styled.div`
-  display: flex;
-  gap: 16px;
-  color: #7f8c8d;
-  font-size: 14px;
-  
-  @media (max-width: 768px) {
-    flex-direction: column;
-    gap: 4px;
-    font-size: 12px;
+  .job-details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    row-gap: 4px;
+    
+    .detail-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: var(--font-size-sm);
+      color: var(--text-secondary);
+      font-weight: 500;
+      
+      .dot {
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: var(--text-light);
+      }
+    }
   }
 `;
 
@@ -246,124 +215,117 @@ const JobStatus = styled.div`
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  margin-right: 16px;
+  min-width: 120px;
   
   .status-badge {
-    padding: 6px 12px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 9999px;
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
     
-    &.pending {
-      background: #fff3cd;
-      color: #856404;
-    }
-    
-    &.printing {
-      background: #d1ecf1;
-      color: #0c5460;
-    }
-    
-    &.completed {
-      background: #d4edda;
-      color: #155724;
-    }
-    
-    &.cancelled {
-      background: #f8d7da;
-      color: #721c24;
-    }
+    &.pending { background: #fef3c7; color: #92400e; }
+    &.printing { background: #e0f2fe; color: #075985; }
+    &.completed { background: #dcfce7; color: #166534; }
+    &.cancelled { background: #fee2e2; color: #991b1b; }
   }
   
   .job-cost {
-    font-size: 14px;
-    font-weight: 500;
-    color: #2c3e50;
+    font-size: var(--font-size-md);
+    font-weight: 700;
+    color: var(--text-primary);
   }
   
-  @media (max-width: 768px) {
+  @media (max-width: 992px) {
     flex-direction: row;
-    margin-right: 0;
-    margin-bottom: 8px;
-    align-items: center;
     justify-content: space-between;
     width: 100%;
-    
-    .job-cost {
-      font-size: 12px;
-    }
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: var(--spacing-md);
   }
 `;
 
 const JobActions = styled.div`
   display: flex;
-  gap: 8px;
+  gap: var(--spacing-sm);
   
-  @media (max-width: 768px) {
-    align-self: flex-end;
+  @media (max-width: 992px) {
+    justify-content: flex-end;
+    width: 100%;
   }
 `;
 
 const ActionButton = styled.button`
-  width: 36px;
-  height: 36px;
-  border: 1px solid #e1e5e9;
-  border-radius: 6px;
-  background: white;
-  color: #333;
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: ${props => props.disabled ? 'not-allowed' : 'pointer'};
-  transition: all 0.2s ease;
-  position: relative;
+  background: white;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  color: var(--text-secondary);
+  font-size: 16px;
+  transition: all var(--transition-fast);
   
-  ${props => props.disabled && `
-    opacity: 0.5;
-    pointer-events: none;
-  `}
+  &:hover:not(:disabled) {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    background: var(--background-light);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-sm);
+  }
   
-  &:not(:disabled):hover {
-    background: ${props => {
-      if (props.className?.includes('danger')) return '#f8d7da';
-      if (props.className?.includes('success')) return '#d4edda';
-      return '#f8f9fa';
-    }};
-    color: ${props => {
-      if (props.className?.includes('danger')) return '#721c24';
-      if (props.className?.includes('success')) return '#155724';
-      return '#333';
-    }};
-    border-color: ${props => {
-      if (props.className?.includes('danger')) return '#f5c6cb';
-      if (props.className?.includes('success')) return '#c3e6cb';
-      return '#3498db';
-    }};
+  &.danger:hover:not(:disabled) {
+    border-color: var(--error-color);
+    color: var(--error-color);
+    background: #fef2f2;
+  }
+  
+  &.success:hover:not(:disabled) {
+    border-color: var(--success-color);
+    color: var(--success-color);
+    background: #f0fdf4;
   }
   
   &:disabled {
+    opacity: 0.4;
     cursor: not-allowed;
-    opacity: 0.6;
-  }
-  
-  @media (max-width: 768px) {
-    width: 32px;
-    height: 32px;
-    font-size: 14px;
+    background: var(--background-light);
   }
 `;
 
 const LoadingWrapper = styled.div`
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px;
-  color: #7f8c8d;
+  padding: 80px;
+  gap: var(--spacing-md);
+  color: var(--text-secondary);
+  font-weight: 600;
+  
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--background-light);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
 `;
 
 const PrintJobQueue = () => {
   const { currentUser } = useAuth();
-  const { printJobs, cancelPrintJob, deletePrintJob, getJobById, viewPrintJob } = usePrintJob();
+  const { printJobs, deletePrintJob, viewPrintJob } = usePrintJob();
   const navigate = useNavigate();
   const [filteredJobs, setFilteredJobs] = useState([]);
   const [filters, setFilters] = useState({
@@ -425,28 +387,11 @@ const PrintJobQueue = () => {
     setFilteredJobs(jobs);
   }, [userJobs, filters, sortBy, sortOrder]);
 
-  const handleCancelJob = async (jobId) => {
-    if (window.confirm('Are you sure you want to cancel this print job?')) {
-      try {
-        await cancelPrintJob(jobId);
-        toast.success('Print job cancelled successfully');
-      } catch (error) {
-        toast.error('Failed to cancel print job: ' + error.message);
-      }
-    }
-  };
-
   const handleDeleteJob = async (jobId) => {
     if (window.confirm('Are you sure you want to delete this print job? This cannot be undone.')) {
       try {
         await deletePrintJob(jobId);
         toast.success('Print job deleted successfully');
-        // Remove from viewed jobs if it was there
-        setViewedJobs(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(jobId);
-          return newSet;
-        });
       } catch (error) {
         toast.error('Failed to delete print job: ' + error.message);
       }
@@ -525,7 +470,8 @@ const PrintJobQueue = () => {
     return (
       <QueueContainer>
         <LoadingWrapper>
-          <div>Loading print jobs...</div>
+          <div className="spinner" />
+          <div>Loading your secure print jobs...</div>
         </LoadingWrapper>
       </QueueContainer>
     );
@@ -551,58 +497,55 @@ const PrintJobQueue = () => {
 
       <ControlsSection>
         <ControlsGrid>
-          <ControlGroup>
+          <ControlGroup hasIcon>
             <label htmlFor="search">Search Jobs</label>
-            <div style={{ position: 'relative' }}>
-              <FaSearch style={{ 
-                position: 'absolute', 
-                left: '10px', 
-                top: '50%', 
-                transform: 'translateY(-50%)', 
-                color: '#7f8c8d' 
-              }} />
+            <div className="input-wrapper">
+              <FaSearch className="input-icon" />
               <input
                 id="search"
                 type="text"
-                placeholder="Search by document name or notes..."
+                placeholder="Search documents..."
                 value={filters.search}
                 onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                style={{ paddingLeft: '34px' }}
               />
             </div>
           </ControlGroup>
 
           <ControlGroup>
             <label htmlFor="status">Status</label>
-            <select
-              id="status"
-              value={filters.status}
-              onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
-            >
-              <option value="all">All Statuses</option>
-              <option value="pending">Pending</option>
-              <option value="printing">Printing</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
+            <div className="input-wrapper">
+              <select
+                id="status"
+                value={filters.status}
+                onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
+              >
+                <option value="all">All Statuses</option>
+                <option value="pending">Pending</option>
+                <option value="printing">Printing</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
           </ControlGroup>
 
           <ControlGroup>
             <label htmlFor="priority">Priority</label>
-            <select
-              id="priority"
-              value={filters.priority}
-              onChange={(e) => setFilters(prev => ({ ...prev, priority: e.target.value }))}
-            >
-              <option value="all">All Priorities</option>
-              <option value="high">High</option>
-              <option value="normal">Normal</option>
-              <option value="low">Low</option>
-            </select>
+            <div className="input-wrapper">
+              <select
+                id="priority"
+                value={filters.priority}
+                onChange={(e) => setFilters(prev => ({ ...prev, priority: e.target.value }))}
+              >
+                <option value="all">All Priorities</option>
+                <option value="high">High</option>
+                <option value="normal">Normal</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
           </ControlGroup>
 
           <SortSection>
-            <span style={{ color: '#7f8c8d', fontSize: '14px', marginRight: '8px' }}>Sort by:</span>
+            <span className="sort-label">Sort by:</span>
             <SortButton
               className={sortBy === 'submittedAt' ? 'active' : ''}
               onClick={() => handleSort('submittedAt')}
@@ -617,13 +560,6 @@ const PrintJobQueue = () => {
               <FaSort />
               Name
             </SortButton>
-            <SortButton
-              className={sortBy === 'status' ? 'active' : ''}
-              onClick={() => handleSort('status')}
-            >
-              <FaSort />
-              Status
-            </SortButton>
           </SortSection>
         </ControlsGrid>
       </ControlsSection>
@@ -636,22 +572,36 @@ const PrintJobQueue = () => {
                 <JobStatus>
                   <div className={`status-badge ${job.status}`}>
                     {getStatusIcon(job.status)}
-                    {job.status.charAt(0).toUpperCase() + job.status.slice(1)}
+                    {job.status}
                   </div>
                   <div className="job-cost">${job.cost?.toFixed(2) || '0.00'}</div>
                 </JobStatus>
                 
                 <JobInfo>
-                  <JobTitle title={job.documentName}>{job.documentName}</JobTitle>
-                  <JobDetails>
-                    <span>Pages: {job.pages}</span>
-                    <span>Copies: {job.copies}</span>
-                    <span style={{ color: getPriorityColor(job.priority) }}>
-                      Priority: {job.priority}
-                    </span>
-                    <span>Submitted: {formatDate(job.submittedAt)}</span>
-                    {job.notes && <span>Notes: {job.notes}</span>}
-                  </JobDetails>
+                  <div className="job-title" title={job.documentName}>{job.documentName}</div>
+                  <div className="job-details">
+                    <div className="detail-item">
+                      <span>{job.pages} Pages</span>
+                      <div className="dot" />
+                      <span>{job.copies} Copies</span>
+                    </div>
+                    <div className="detail-item">
+                      <div className="dot" />
+                      <span style={{ color: getPriorityColor(job.priority) }}>
+                        {job.priority.toUpperCase()} Priority
+                      </span>
+                    </div>
+                    <div className="detail-item">
+                      <div className="dot" />
+                      <span>{formatDate(job.submittedAt)}</span>
+                    </div>
+                    {job.notes && (
+                      <div className="detail-item">
+                        <div className="dot" />
+                        <span>{job.notes}</span>
+                      </div>
+                    )}
+                  </div>
                 </JobInfo>
                 
                 <JobActions>

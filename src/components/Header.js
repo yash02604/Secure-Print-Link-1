@@ -13,39 +13,44 @@ import {
 } from 'react-icons/fa';
 
 const HeaderContainer = styled.header`
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  padding: 0 20px;
-  height: 60px;
+  background: var(--background-card);
+  color: var(--text-primary);
+  padding: 0 24px;
+  height: 64px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   z-index: 1000;
+  border-bottom: 1px solid var(--border-color);
 `;
 
 const LeftSection = styled.div`
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
 `;
 
 const MenuButton = styled.button`
-  background: none;
+  background: transparent;
   border: none;
-  color: white;
+  color: var(--text-secondary);
   font-size: 20px;
   cursor: pointer;
   padding: 8px;
-  border-radius: 4px;
-  transition: background-color 0.2s;
+  border-radius: var(--border-radius-md);
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   
   &:hover {
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: var(--background-light);
+    color: var(--primary-color);
   }
   
   @media (min-width: 769px) {
@@ -56,16 +61,20 @@ const MenuButton = styled.button`
 const Logo = styled.div`
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 20px;
-  font-weight: bold;
+  gap: 12px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.025em;
   
   .logo-icon {
     font-size: 24px;
+    color: var(--primary-color);
   }
   
   @media (max-width: 768px) {
-    font-size: 18px;
+    font-size: 1.125rem;
+    margin-left: 40px; /* Account for mobile menu toggle */
     
     .logo-text {
       display: none;
@@ -76,45 +85,54 @@ const Logo = styled.div`
 const RightSection = styled.div`
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 8px;
 `;
 
-const NotificationButton = styled.button`
-  background: none;
+const IconButton = styled.button`
+  background: transparent;
   border: none;
-  color: white;
+  color: var(--text-secondary);
   font-size: 18px;
   cursor: pointer;
-  padding: 8px;
-  border-radius: 4px;
+  padding: 10px;
+  border-radius: var(--border-radius-md);
   position: relative;
-  transition: background-color 0.2s;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   
   &:hover {
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: var(--background-light);
+    color: var(--primary-color);
   }
   
-  .notification-badge {
+  .badge {
     position: absolute;
-    top: 0;
-    right: 0;
-    background-color: #ff4757;
+    top: 6px;
+    right: 6px;
+    background-color: var(--error-color);
     color: white;
     border-radius: 50%;
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     font-size: 10px;
+    font-weight: 700;
     display: flex;
     align-items: center;
     justify-content: center;
+    border: 2px solid var(--background-card);
   }
 `;
 
 const UserSection = styled.div`
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   position: relative;
+  margin-left: 8px;
+  padding-left: 16px;
+  border-left: 1px solid var(--border-color);
 `;
 
 const UserInfo = styled.div`
@@ -123,104 +141,103 @@ const UserInfo = styled.div`
   align-items: flex-end;
   
   .user-name {
-    font-weight: 500;
-    font-size: 14px;
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--text-primary);
   }
   
   .user-role {
-    font-size: 12px;
-    opacity: 0.8;
+    font-size: 0.75rem;
+    color: var(--text-light);
+    text-transform: capitalize;
   }
   
-  @media (max-width: 768px) {
+  @media (max-width: 1024px) {
     display: none;
   }
 `;
 
 const UserAvatar = styled.button`
-  background: rgba(255, 255, 255, 0.2);
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-radius: 50%;
+  background: var(--background-light);
+  border: 2px solid var(--border-color);
+  border-radius: var(--border-radius-md);
   width: 40px;
   height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
-  font-size: 18px;
+  color: var(--primary-color);
+  font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-fast);
   
   &:hover {
-    background: rgba(255, 255, 255, 0.3);
-    border-color: rgba(255, 255, 255, 0.5);
+    border-color: var(--primary-color);
+    background: white;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
   }
 `;
 
 const DropdownMenu = styled.div`
   position: absolute;
-  top: 100%;
+  top: calc(100% + 12px);
   right: 0;
   background: white;
-  border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  min-width: 200px;
-  padding: 8px 0;
-  margin-top: 8px;
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-xl);
+  min-width: 240px;
+  padding: 8px;
   z-index: 1000;
-  
-  &::before {
-    content: '';
-    position: absolute;
-    top: -8px;
-    right: 20px;
-    width: 0;
-    height: 0;
-    border-left: 8px solid transparent;
-    border-right: 8px solid transparent;
-    border-bottom: 8px solid white;
+  border: 1px solid var(--border-color);
+  animation: slideIn 0.2s ease-out;
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
   }
   
   @media (max-width: 768px) {
     position: fixed;
-    top: 60px;
+    top: 72px;
     right: 16px;
     left: 16px;
     min-width: auto;
-    margin-top: 0;
-    
-    &::before {
-      display: none;
-    }
   }
 `;
 
 const DropdownItem = styled.button`
   width: 100%;
-  padding: 12px 16px;
-  background: none;
+  padding: 10px 12px;
+  background: transparent;
   border: none;
+  border-radius: var(--border-radius-md);
   text-align: left;
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: #333;
-  font-size: 14px;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all var(--transition-fast);
   
   &:hover {
-    background-color: #f8f9fa;
+    background-color: var(--background-light);
+    color: var(--primary-color);
   }
   
-  &:first-child {
-    border-radius: 8px 8px 0 0;
-  }
-  
-  &:last-child {
-    border-radius: 0 0 8px 8px;
-    border-top: 1px solid #eee;
-    color: #dc3545;
+  &.danger {
+    color: var(--error-color);
+    margin-top: 4px;
+    border-top: 1px solid var(--border-color);
+    border-radius: 0 0 var(--border-radius-md) var(--border-radius-md);
+    padding-top: 14px;
+    
+    &:hover {
+      background-color: #fef2f2;
+    }
   }
 `;
 
@@ -275,12 +292,12 @@ const Header = ({ onMenuToggle }) => {
       </LeftSection>
 
       <RightSection>
-        <NotificationButton>
+        <IconButton>
           <FaBell />
           {notifications > 0 && (
-            <span className="notification-badge">{notifications}</span>
+            <span className="badge">{notifications}</span>
           )}
-        </NotificationButton>
+        </IconButton>
 
         <UserSection>
           <UserInfo>
@@ -306,7 +323,7 @@ const Header = ({ onMenuToggle }) => {
                 <FaPrint />
                 Submit Print Job
               </DropdownItem>
-              <DropdownItem onClick={handleLogout}>
+              <DropdownItem onClick={handleLogout} className="danger">
                 <FaSignOutAlt />
                 Logout
               </DropdownItem>
