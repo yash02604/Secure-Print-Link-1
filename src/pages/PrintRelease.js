@@ -373,7 +373,7 @@ const EmptyState = styled.div`
 const PrintRelease = () => {
   const { loginWithPin, mockUsers } = useAuth();
   const { jobs: printJobs } = useJobQueue();
-  const { releaseJob, loading: releaseLoading } = usePrintRelease();
+  const { releaseJob } = usePrintRelease();
   const { printers, fetchPrinters } = usePrinters();
   const params = useParams();
   const location = useLocation();

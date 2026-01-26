@@ -429,7 +429,7 @@ const PrintJobQueue = () => {
   const { currentUser } = useAuth();
   const { jobs, fetchJobs, deleteJob, viewJob, isFetching } = useJobQueue();
   const { printers, fetchPrinters } = usePrinters();
-  const { releaseJob, loading: releaseLoading } = usePrintRelease();
+  const { releaseJob } = usePrintRelease();
   const navigate = useNavigate();
   
   const [filteredJobs, setFilteredJobs] = useState([]);

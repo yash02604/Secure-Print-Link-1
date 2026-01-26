@@ -1,6 +1,5 @@
-import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
+import React, { createContext, useState, useContext } from 'react';
 import api from '../api/client';
-import { toast } from 'react-toastify';
 
 const PrintJobContext = createContext();
 
@@ -13,7 +12,6 @@ export const usePrintJob = () => {
 };
 
 export const PrintJobProvider = ({ children }) => {
-  const [loading, setLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -104,7 +102,6 @@ export const PrintJobProvider = ({ children }) => {
   };
 
   const value = {
-    loading,
     isSubmitting,
     error,
     setError,

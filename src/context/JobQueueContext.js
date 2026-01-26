@@ -15,7 +15,6 @@ export const useJobQueue = () => {
 export const JobQueueProvider = ({ children }) => {
   const { currentUser } = useAuth();
   const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [isFetching, setIsFetching] = useState(false);
   
   const fetchJobs = useCallback(async (silent = false) => {
@@ -85,7 +84,6 @@ export const JobQueueProvider = ({ children }) => {
 
   const value = {
     jobs,
-    loading,
     isFetching,
     fetchJobs,
     deleteJob,

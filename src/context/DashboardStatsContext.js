@@ -16,7 +16,6 @@ export const DashboardStatsProvider = ({ children }) => {
   const { currentUser } = useAuth();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
 
   const fetchStats = useCallback(async () => {
     if (!currentUser?.id) return;
@@ -37,7 +36,6 @@ export const DashboardStatsProvider = ({ children }) => {
   const value = {
     stats,
     loading,
-    error,
     fetchStats
   };
 
