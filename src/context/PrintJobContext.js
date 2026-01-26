@@ -332,6 +332,7 @@ export const PrintJobProvider = ({ children }) => {
   };
 
   const viewPrintJob = async (jobId, token, userId) => {
+    toast.dismiss(); // Clear old toasts
     if (jobId.startsWith('local_')) {
       const now = new Date().toISOString();
       const job = printJobs.find(j => j.id === jobId);
@@ -407,6 +408,7 @@ export const PrintJobProvider = ({ children }) => {
   };
 
   const releasePrintJob = async (jobId, printerId, releasedBy, token) => {
+    toast.dismiss(); // Clear old toasts
     if (jobId.startsWith('local_')) {
       setPrintJobs(prev => prev.map(job => 
         job.id === jobId ? { ...job, status: 'released', releasedAt: new Date().toISOString() } : job
@@ -424,10 +426,15 @@ export const PrintJobProvider = ({ children }) => {
       });
 
       if (response.data.success) {
-        // Update job status
+        // Update job status and clear document data locally
         setPrintJobs(prev => prev.map(job => 
           job.id === jobId 
-            ? { ...job, status: 'released', releasedAt: new Date().toISOString() }
+            ? { 
+                ...job, 
+                status: 'released', 
+                releasedAt: new Date().toISOString(),
+                document: null // Clear document data on release
+              }
             : job
         ));
 
@@ -436,10 +443,18 @@ export const PrintJobProvider = ({ children }) => {
       }
     } catch (error) {
       console.error('Error releasing job:', error);
-      if (error.response?.data?.error) {
-        throw new Error(error.response.data.error);
+      const errorMsg = error.response?.data?.error || error.message || 'Failed to release print job';
+      
+      if (error.response?.status === 409) {
+        toast.warning('This job has already been released.');
+        // Sync state
+        setPrintJobs(prev => prev.map(job => 
+          job.id === jobId ? { ...job, status: 'released' } : job
+        ));
+      } else {
+        toast.error(errorMsg);
       }
-      throw new Error('Failed to release print job');
+      throw new Error(errorMsg);
     } finally {
       setLoading(false);
     }

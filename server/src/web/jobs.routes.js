@@ -222,7 +222,7 @@ router.get('/:id', (req, res) => {
           console.error('Error deleting expired file:', err);
         }
       }
-      return res.status(403).json({ error: 'Print link has expired' });
+      return res.status(410).json({ error: 'Print link has expired' });
     }
   }
   
@@ -311,7 +311,7 @@ router.post('/:id/view', (req, res) => {
             console.error('Error deleting expired file:', err);
           }
         }
-        return res.status(403).json({ error: 'Print link has expired' });
+        return res.status(410).json({ error: 'Print link has expired' });
       }
     }
     
@@ -424,13 +424,18 @@ router.post('/:id/release', (req, res) => {
             console.error('Error deleting expired file:', err);
           }
         }
-        return res.status(403).json({ error: 'Print link has expired' });
+        return res.status(410).json({ error: 'Print link has expired' });
       }
     }
     
     const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
+    
+    // REJECTION: Already released jobs
+    if (job.status === 'released') {
+      return res.status(409).json({ error: 'Print job has already been released' });
+    }
     
     // Check if job has been viewed (single-use view must occur before release)
     if (job.viewCount === 0) {
@@ -443,6 +448,14 @@ router.post('/:id/release', (req, res) => {
     // Update job status to released and track release metadata
     db.prepare('UPDATE jobs SET status = ?, releasedAt = ?, printerId = ?, releasedBy = ? WHERE id = ?')
       .run('released', new Date().toISOString(), printerId || null, releasedBy || null, id);
+
+    // SECURITY: Clear document data from DB on release
+    try {
+      db.prepare('DELETE FROM documents WHERE jobId = ?').run(id);
+      console.log(`[Release] Cleared document data for job ${id}`);
+    } catch (docErr) {
+      console.error(`[Release] Error clearing document data for job ${id}:`, docErr);
+    }
 
     console.log(`[Release] Job ${id} released for printing on printer ${printerId} by user ${releasedBy}`);
 

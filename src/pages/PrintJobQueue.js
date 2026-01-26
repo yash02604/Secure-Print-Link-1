@@ -229,6 +229,7 @@ const JobStatus = styled.div`
     letter-spacing: 0.025em;
     
     &.pending { background: #fef3c7; color: #92400e; }
+    &.released { background: #e0f2fe; color: #075985; }
     &.printing { background: #e0f2fe; color: #075985; }
     &.completed { background: #dcfce7; color: #166534; }
     &.cancelled { background: #fee2e2; color: #991b1b; }
@@ -325,7 +326,7 @@ const LoadingWrapper = styled.div`
 
 const PrintJobQueue = () => {
   const { currentUser } = useAuth();
-  const { printJobs, deletePrintJob, viewPrintJob } = usePrintJob();
+  const { printJobs, deletePrintJob, viewPrintJob, releasePrintJob, printers } = usePrintJob();
   const navigate = useNavigate();
   const [filteredJobs, setFilteredJobs] = useState([]);
   const [filters, setFilters] = useState({
@@ -415,7 +416,6 @@ const PrintJobQueue = () => {
       if (documentData?.dataUrl) {
         // Open in new tab for preview (not download)
         window.open(documentData.dataUrl, '_blank');
-        toast.success('Document preview opened. This was a one-time view - the button is now permanently disabled.');
       } else {
         toast.error('Document data not available for viewing.');
       }
@@ -425,6 +425,24 @@ const PrintJobQueue = () => {
         return;
       }
       toast.error('Failed to view document: ' + error.message);
+    }
+  };
+
+  const handleReleaseJob = async (jobId) => {
+    const job = filteredJobs.find(j => j.id === jobId);
+    if (!job) return;
+
+    // Find an online printer (default)
+    const printer = printers.find(p => p.status === 'online') || { id: 1 };
+
+    setLoading(true);
+    try {
+      await releasePrintJob(jobId, printer.id, currentUser.id, job.secureToken);
+      // No toast here, Context handles it
+    } catch (error) {
+      // Context handles toast
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -616,7 +634,8 @@ const PrintJobQueue = () => {
                   
                   {job.status === 'pending' && job.viewCount > 0 && (
                     <ActionButton
-                      onClick={() => navigate(`/print-release?token=${job.secureToken}`)}
+                      onClick={() => handleReleaseJob(job.id)}
+                      disabled={loading}
                       title="Release this job for printing"
                       className="success"
                     >
