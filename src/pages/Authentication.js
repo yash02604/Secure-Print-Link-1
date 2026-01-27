@@ -21,6 +21,16 @@ const AuthContainer = styled.div`
   align-items: center;
   justify-content: center;
   padding: 20px;
+  
+  @media (max-width: 1023px) {
+    padding: 15px;
+  }
+  
+  @media (max-width: 767px) {
+    padding: 10px;
+    align-items: flex-start;
+    padding-top: 20px;
+  }
 `;
 
 const AuthCard = styled.div`
@@ -32,6 +42,12 @@ const AuthCard = styled.div`
   max-width: 900px;
   display: flex;
   min-height: 600px;
+  
+  @media (max-width: 767px) {
+    flex-direction: column;
+    min-height: auto;
+    border-radius: 15px;
+  }
 `;
 
 const LeftPanel = styled.div`
@@ -45,16 +61,43 @@ const LeftPanel = styled.div`
   align-items: center;
   text-align: center;
   
+  @media (max-width: 1023px) {
+    padding: 30px;
+  }
+  
+  @media (max-width: 767px) {
+    padding: 25px 20px;
+    text-align: center;
+  }
+  
   .hero-icon {
     font-size: 80px;
     margin-bottom: 20px;
     opacity: 0.9;
+    
+    @media (max-width: 1023px) {
+      font-size: 60px;
+    }
+    
+    @media (max-width: 767px) {
+      font-size: 50px;
+      margin-bottom: 15px;
+    }
   }
   
   .hero-title {
     font-size: 32px;
     font-weight: bold;
     margin-bottom: 15px;
+    
+    @media (max-width: 1023px) {
+      font-size: 28px;
+    }
+    
+    @media (max-width: 767px) {
+      font-size: 24px;
+      margin-bottom: 10px;
+    }
   }
   
   .hero-subtitle {
@@ -62,11 +105,25 @@ const LeftPanel = styled.div`
     opacity: 0.9;
     line-height: 1.6;
     max-width: 300px;
+    
+    @media (max-width: 1023px) {
+      font-size: 15px;
+      max-width: 100%;
+    }
+    
+    @media (max-width: 767px) {
+      font-size: 14px;
+    }
   }
   
   .features {
     margin-top: 30px;
     text-align: left;
+    
+    @media (max-width: 767px) {
+      margin-top: 20px;
+      text-align: center;
+    }
     
     .feature {
       display: flex;
@@ -75,8 +132,15 @@ const LeftPanel = styled.div`
       margin-bottom: 15px;
       font-size: 14px;
       
+      @media (max-width: 767px) {
+        justify-content: center;
+        font-size: 13px;
+        margin-bottom: 12px;
+      }
+      
       .feature-icon {
         color: #2ecc71;
+        flex-shrink: 0;
       }
     }
   }
@@ -88,12 +152,24 @@ const RightPanel = styled.div`
   display: flex;
   flex-direction: column;
   justify-content: center;
+  
+  @media (max-width: 1023px) {
+    padding: 30px;
+  }
+  
+  @media (max-width: 767px) {
+    padding: 25px 20px;
+  }
 `;
 
 const AuthTabs = styled.div`
   display: flex;
   margin-bottom: 30px;
   border-bottom: 2px solid #f1f3f4;
+  
+  @media (max-width: 767px) {
+    margin-bottom: 20px;
+  }
 `;
 
 const TabButton = styled.button`
@@ -107,6 +183,17 @@ const TabButton = styled.button`
   cursor: pointer;
   border-bottom: 2px solid ${props => props.active ? '#667eea' : 'transparent'};
   transition: all 0.3s ease;
+  min-height: 44px; /* Touch-friendly */
+  
+  @media (max-width: 1023px) {
+    padding: 12px;
+    font-size: 15px;
+  }
+  
+  @media (max-width: 767px) {
+    font-size: 14px;
+    padding: 10px;
+  }
   
   &:hover {
     color: #667eea;
@@ -117,6 +204,10 @@ const Form = styled.form`
   display: flex;
   flex-direction: column;
   gap: 20px;
+  
+  @media (max-width: 767px) {
+    gap: 15px;
+  }
 `;
 
 const FormGroup = styled.div`
@@ -124,10 +215,18 @@ const FormGroup = styled.div`
   flex-direction: column;
   gap: 8px;
   
+  @media (max-width: 767px) {
+    gap: 6px;
+  }
+  
   label {
     font-weight: 500;
     color: #333;
     font-size: 14px;
+    
+    @media (max-width: 767px) {
+      font-size: 13px;
+    }
   }
 `;
 
@@ -167,6 +266,18 @@ const Input = styled.input`
   border-radius: 10px;
   font-size: 16px;
   transition: border-color 0.3s ease;
+  min-height: 44px; /* Touch-friendly */
+  
+  @media (max-width: 1023px) {
+    padding: 12px 12px 12px 40px;
+    font-size: 15px;
+  }
+  
+  @media (max-width: 767px) {
+    padding: 12px 12px 12px 35px;
+    font-size: 16px; /* Keep readable on mobile */
+    border-radius: 8px;
+  }
   
   &:focus {
     outline: none;
@@ -183,6 +294,10 @@ const PinInput = styled.div`
   gap: 10px;
   justify-content: center;
   
+  @media (max-width: 767px) {
+    gap: 8px;
+  }
+  
   input {
     width: 60px;
     height: 60px;
@@ -192,6 +307,25 @@ const PinInput = styled.div`
     font-size: 24px;
     font-weight: bold;
     transition: border-color 0.3s ease;
+    min-width: 44px; /* Touch-friendly */
+    min-height: 44px;
+    
+    @media (max-width: 1023px) {
+      width: 50px;
+      height: 50px;
+      font-size: 20px;
+    }
+    
+    @media (max-width: 767px) {
+      width: 15vw;
+      height: 15vw;
+      max-width: 60px;
+      max-height: 60px;
+      min-width: 44px;
+      min-height: 44px;
+      font-size: 6vw;
+      max-font-size: 24px;
+    }
     
     &:focus {
       outline: none;
@@ -210,6 +344,19 @@ const LoginButton = styled.button`
   font-weight: 600;
   cursor: pointer;
   transition: transform 0.2s ease;
+  min-height: 44px; /* Touch-friendly */
+  width: 100%;
+  
+  @media (max-width: 1023px) {
+    padding: 12px;
+    font-size: 15px;
+  }
+  
+  @media (max-width: 767px) {
+    padding: 14px;
+    font-size: 16px;
+    border-radius: 8px;
+  }
   
   &:hover {
     transform: translateY(-2px);
@@ -229,11 +376,21 @@ const QRCodeSection = styled.div`
   border-radius: 10px;
   margin-top: 20px;
   
+  @media (max-width: 767px) {
+    padding: 15px;
+    margin-top: 15px;
+  }
+  
   .qr-title {
     font-size: 16px;
     font-weight: 500;
     margin-bottom: 15px;
     color: #333;
+    
+    @media (max-width: 767px) {
+      font-size: 15px;
+      margin-bottom: 12px;
+    }
   }
   
   .qr-code {
@@ -242,6 +399,23 @@ const QRCodeSection = styled.div`
     background: white;
     border-radius: 10px;
     display: inline-block;
+    
+    @media (max-width: 767px) {
+      padding: 15px;
+      max-width: 100%;
+    }
+    
+    canvas {
+      max-width: 100%;
+      height: auto !important;
+      
+      @media (max-width: 767px) {
+        width: 60vw !important;
+        height: 60vw !important;
+        max-width: 200px !important;
+        max-height: 200px !important;
+      }
+    }
   }
   
   .qr-instructions {
@@ -249,6 +423,11 @@ const QRCodeSection = styled.div`
     font-size: 14px;
     color: #666;
     line-height: 1.5;
+    
+    @media (max-width: 767px) {
+      font-size: 13px;
+      margin-top: 12px;
+    }
   }
 `;
 
@@ -259,16 +438,33 @@ const DemoCredentials = styled.div`
   border-radius: 10px;
   border-left: 4px solid #667eea;
   
+  @media (max-width: 767px) {
+    margin-top: 15px;
+    padding: 12px;
+  }
+  
   .demo-title {
     font-weight: 600;
     color: #333;
     margin-bottom: 10px;
+    font-size: 14px;
+    
+    @media (max-width: 767px) {
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
   }
   
   .demo-item {
     font-size: 14px;
     color: #666;
     margin-bottom: 5px;
+    
+    @media (max-width: 767px) {
+      font-size: 12px;
+      margin-bottom: 4px;
+      line-height: 1.4;
+    }
     
     strong {
       color: #333;
