@@ -3,8 +3,7 @@ import styled from 'styled-components';
 import { useChat } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
 import { usePrintJob } from '../context/PrintJobContext';
-import { FaComments, FaPaperPlane, FaCircle, FaSearch } from 'react-icons/fa';
-import { toast } from 'react-toastify';
+import { FaComments, FaPaperPlane, FaCircle } from 'react-icons/fa';
 
 const ChatPageContainer = styled.div`
   display: flex;
@@ -358,7 +357,7 @@ const ChatPage = () => {
     if (activeConversation && selectedConversation?.id !== activeConversation.id) {
       setSelectedConversation(activeConversation);
     }
-  }, [activeConversation]);
+  }, [activeConversation, selectedConversation?.id]);
 
   const handleSelectConversation = (conv) => {
     setSelectedConversation(conv);

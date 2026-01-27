@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import styled from 'styled-components';
 import { useChat } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
@@ -287,7 +287,7 @@ const ChatWindow = ({ conversation, onClose }) => {
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
 
-  const conversationMessages = messages[conversation.id] || [];
+  const conversationMessages = useMemo(() => messages[conversation.id] || [], [messages, conversation.id]);
   const isOnline = conversation.printerShopId && onlineUsers.has(conversation.printerShopId);
   const isOtherTyping = typingUsers[conversation.id];
 

@@ -119,7 +119,7 @@ export const ChatProvider = ({ children }) => {
     return () => {
       newSocket.close();
     };
-  }, [isAuthenticated, currentUser]);
+  }, [isAuthenticated, currentUser, activeConversation?.id]);
 
   // Load conversations
   const loadConversations = useCallback(async () => {
@@ -234,6 +234,7 @@ export const ChatProvider = ({ children }) => {
     
     // Mark messages as read
     markMessagesAsRead(conversationId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket, conversations]);
 
   // Leave conversation room

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import styled from 'styled-components';
 import { useChat } from '../context/ChatContext';
 import { ChatWindow, ChatList } from './Chat';
-import { FaComments, FaTimes } from 'react-icons/fa';
+import { FaComments } from 'react-icons/fa';
 
 const FloatingButton = styled.button`
   position: fixed;
