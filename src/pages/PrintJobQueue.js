@@ -405,6 +405,11 @@ const PrintJobQueue = () => {
       toast.error('Job not found.');
       return;
     }
+    
+    if (job.viewCount > 0) {
+      toast.error('Document already viewed (one-time only)');
+      return;
+    }
 
     try {
       const documentData = await viewPrintJob(jobId, job.secureToken, currentUser.id);
@@ -415,6 +420,10 @@ const PrintJobQueue = () => {
         toast.error('Document data not available for viewing.');
       }
     } catch (error) {
+      if (error.message === 'Document already viewed') {
+        // Already handled by viewPrintJob
+        return;
+      }
       toast.error('Failed to view document: ' + error.message);
     }
   };
@@ -616,13 +625,14 @@ const PrintJobQueue = () => {
                 <JobActions>
                   <ActionButton
                     onClick={() => handleViewJob(job.id)}
-                    title="Preview document"
-                    className="success"
+                    disabled={job.viewCount > 0}
+                    title={job.viewCount > 0 ? 'Document already viewed (one-time only)' : 'Preview document (one-time view)'}
+                    className={job.viewCount > 0 ? 'danger' : 'success'}
                   >
-                    <FaEye />
+                    {job.viewCount > 0 ? <FaTimes /> : <FaEye />}
                   </ActionButton>
                   
-                  {job.status === 'pending' && (
+                  {job.status === 'pending' && job.viewCount > 0 && (
                     <ActionButton
                       onClick={() => handleReleaseJob(job.id)}
                       disabled={loading}
