@@ -915,20 +915,18 @@ const PrintRelease = () => {
       return;
     }
     
-    // Use cached document first, fallback to job document, then fetch from server
+    // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
     
-    // If no document data, try to fetch it
+    // If no document data, fetch it via view endpoint (this is the first and only time)
     if (!documentData?.dataUrl) {
       try {
         setLoading(true);
-        // Try to view the job to get document data
         const fetchedData = await viewPrintJob(job.id, job.secureToken, authenticatedUser?.id || 'anonymous');
         if (fetchedData?.dataUrl) {
           documentData = fetchedData;
-          // Cache it for future use
+          // Cache it for future use (including printing)
           setCachedDocument(fetchedData);
-          // The cache will help with future operations
         }
       } catch (error) {
         console.error('Failed to fetch document for viewing:', error);
@@ -1047,14 +1045,21 @@ const PrintRelease = () => {
       return;
     }
     
-    // Use cached document first, fallback to job document, then fetch from server
+    // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
     
-    // If no document data, try to fetch it
+    // If no document data and job hasn't been viewed yet, we can fetch it
+    // But if job has been viewed, we should have the document cached
     if (!documentData?.dataUrl) {
+      // Check if job has already been viewed
+      if (job.viewCount > 0) {
+        toast.error('Document data not available for printing. Please refresh the page or contact support.');
+        return;
+      }
+      
+      // Job hasn't been viewed yet - fetch document data via view endpoint
       try {
         setLoading(true);
-        // Try to view the job to get document data (this gives us the document for printing)
         const fetchedData = await viewPrintJob(job.id, job.secureToken, authenticatedUser?.id || 'anonymous');
         if (fetchedData?.dataUrl) {
           documentData = fetchedData;
