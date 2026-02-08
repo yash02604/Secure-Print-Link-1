@@ -720,7 +720,6 @@ const PrintRelease = () => {
   const getReleaseButtonTitle = (job) => {
     if (loading) return 'Releasing...';
     if (!selectedPrinter) return 'Select a printer first';
-    if (job.viewCount === 0) return 'Must view document first';
     if (!isJobWithinTimeLimit(job)) return 'Print link has expired';
     return 'Release job to printer';
   };
@@ -781,16 +780,10 @@ const PrintRelease = () => {
       return;
     }
 
-    // Find the job to check view count
+    // Find the job
     const job = jobsWithDocuments.find(j => j.id === jobId);
     if (!job) {
       toast.error('Job not found');
-      return;
-    }
-
-    // Security: Must view document before releasing
-    if (job.viewCount === 0) {
-      toast.error('Must view document first before releasing');
       return;
     }
 
@@ -804,7 +797,7 @@ const PrintRelease = () => {
     try {
       const token = new URLSearchParams(location.search).get('token');
       await releasePrintJob(jobId, selectedPrinter.id, authenticatedUser.id, token);
-      toast.success('Print job released successfully! You can release it again until the link expires.');
+      toast.success('Print job released successfully!');
       
       // Cache document for future use if we have it
       if (job?.document && !cachedDocument) {
@@ -836,12 +829,6 @@ const PrintRelease = () => {
       
       for (const job of jobsWithDocuments) {
         // Check security constraints for each job
-        if (job.viewCount === 0) {
-          errorCount++;
-          console.warn(`Skipping job ${job.id}: Document not viewed`);
-          continue;
-        }
-        
         if (!isJobWithinTimeLimit(job)) {
           errorCount++;
           console.warn(`Skipping job ${job.id}: Link expired`);
@@ -864,7 +851,7 @@ const PrintRelease = () => {
       if (successCount > 0) {
         toast.success(`Successfully released ${successCount} job(s)! ${errorCount > 0 ? `(${errorCount} skipped due to constraints)` : ''}`);
       } else if (errorCount > 0) {
-        toast.error(`Could not release any jobs. Check that documents are viewed and links are not expired.`);
+        toast.error(`Could not release any jobs. Check that links are not expired.`);
       }
     } catch (error) {
       const errorMsg = error.message || 'Failed to release some print jobs';
@@ -909,23 +896,17 @@ const PrintRelease = () => {
   };
 
   const handleViewDocument = async (job) => {
-    // Security: Check if already viewed (single-use enforcement)
-    if (job.viewCount > 0) {
-      toast.error('Document already viewed (one-time only)');
-      return;
-    }
-    
     // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
     
-    // If no document data, fetch it via view endpoint (this is the first and only time)
+    // If no document data, fetch it (no view count restrictions)
     if (!documentData?.dataUrl) {
       try {
         setLoading(true);
         const fetchedData = await viewPrintJob(job.id, job.secureToken, authenticatedUser?.id || 'anonymous');
         if (fetchedData?.dataUrl) {
           documentData = fetchedData;
-          // Cache it for future use (including printing)
+          // Cache it for future use
           setCachedDocument(fetchedData);
         }
       } catch (error) {
@@ -1048,16 +1029,8 @@ const PrintRelease = () => {
     // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
     
-    // If no document data and job hasn't been viewed yet, we can fetch it
-    // But if job has been viewed, we should have the document cached
+    // If no document data, fetch it (no view count restrictions)
     if (!documentData?.dataUrl) {
-      // Check if job has already been viewed
-      if (job.viewCount > 0) {
-        toast.error('Document data not available for printing. Please refresh the page or contact support.');
-        return;
-      }
-      
-      // Job hasn't been viewed yet - fetch document data via view endpoint
       try {
         setLoading(true);
         const fetchedData = await viewPrintJob(job.id, job.secureToken, authenticatedUser?.id || 'anonymous');
@@ -1351,9 +1324,8 @@ const PrintRelease = () => {
                             <ActionButton 
                               className="secondary"
                               onClick={() => handleViewDocument(job)}
-                              disabled={job.viewCount > 0}
-                              title={job.viewCount > 0 ? 'Document already viewed (one-time only)' : 'View Document'}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.viewCount > 0 ? 0.6 : 1 }}
+                              title="View Document"
+                              style={{ padding: '8px 12px', minWidth: 'auto' }}
                             >
                               <FaEye style={{ marginRight: '4px' }} />
                               View
@@ -1371,7 +1343,7 @@ const PrintRelease = () => {
                             <ActionButton 
                               className="primary"
                               onClick={() => handleReleaseJob(job.id)}
-                              disabled={loading || !selectedPrinter || job.viewCount === 0 || !isJobWithinTimeLimit(job)}
+                              disabled={loading || !selectedPrinter || !isJobWithinTimeLimit(job)}
                               title={getReleaseButtonTitle(job)}
                             >
                               Release

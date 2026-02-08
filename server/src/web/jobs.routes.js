@@ -437,12 +437,12 @@ router.post('/:id/release', (req, res) => {
       return res.status(409).json({ error: 'Print job has already been released' });
     }
     
-    // Check if job has been viewed (single-use view must occur before release)
-    if (job.viewCount === 0) {
-      return res.status(403).json({ 
-        error: 'Document must be viewed before releasing. Click the view button first.',
-        requiresView: true
-      });
+    // Check if job has expired
+    if (job.status === 'pending' && job.viewCount > 0) {
+      // Job has been viewed - check expiration
+      if (job.expiresAt && new Date(job.expiresAt) < new Date()) {
+        return res.status(403).json({ error: 'Print link has expired' });
+      }
     }
 
     // Update job status to released and track release metadata
