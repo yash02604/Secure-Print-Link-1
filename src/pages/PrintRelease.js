@@ -370,7 +370,7 @@ const EmptyState = styled.div`
 
 const PrintRelease = () => {
   const { loginWithPin, mockUsers } = useAuth();
-  const { printJobs, releasePrintJob, printers, validateTokenAndExpiration } = usePrintJob();
+  const { printJobs, releasePrintJob, printers, validateTokenAndExpiration, viewPrintJob } = usePrintJob();
   const params = useParams();
   const location = useLocation();
   const [authMethod, setAuthMethod] = useState(null);
@@ -928,11 +928,7 @@ const PrintRelease = () => {
           documentData = fetchedData;
           // Cache it for future use
           setCachedDocument(fetchedData);
-          // Update job in state
-          const updatedJobs = jobsWithDocuments.map(j => 
-            j.id === job.id ? { ...j, document: fetchedData } : j
-          );
-          // We can't update the state directly here, but the cache will help
+          // The cache will help with future operations
         }
       } catch (error) {
         console.error('Failed to fetch document for viewing:', error);
