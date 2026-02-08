@@ -5,6 +5,7 @@ import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 import { usePrintJob } from '../context/PrintJobContext';
 import { QRCodeCanvas } from 'qrcode.react';
+import { encryptFileAES, createEncryptedFile } from '../utils/aesCrypto';
 import { 
   FaUpload, 
   FaFileAlt, 
@@ -369,6 +370,7 @@ const PrintJobSubmission = () => {
   const { submitPrintJob, isSubmitting, error: apiError, setError: setApiError } = usePrintJob();
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [encryptedFile, setEncryptedFile] = useState(null); // Store encrypted file for submission
   const [lastSubmittedJob, setLastSubmittedJob] = useState(null);
   const [jobData, setJobData] = useState({
     documentName: '',
@@ -525,6 +527,7 @@ const PrintJobSubmission = () => {
       if (currentStep === 3) {
         // Reset for another job
         setSelectedFile(null);
+        setEncryptedFile(null);
         setLastSubmittedJob(null);
         setJobData({
           documentName: '',
@@ -548,14 +551,55 @@ const PrintJobSubmission = () => {
       }
 
       try {
+        // Encrypt file before submission
+        let fileToSubmit = selectedFile;
+        
+        if (selectedFile) {
+          try {
+            // Generate secret from jobId + timestamp + userId for deterministic encryption
+            const jobId = 'job_' + Date.now().toString(36);
+            const secret = `${jobId}_${currentUser.id}_${Date.now()}`;
+            
+            // Encrypt the file
+            const { encryptedBlob, iv } = await encryptFileAES(selectedFile, secret);
+            
+            // Create encrypted file with .enc extension
+            const encryptedFileObj = createEncryptedFile(selectedFile, encryptedBlob);
+            
+            // Store encrypted file and IV for later use
+            setEncryptedFile({
+              file: encryptedFileObj,
+              iv: Array.from(iv), // Convert to array for JSON serialization
+              secret: secret
+            });
+            
+            fileToSubmit = encryptedFileObj;
+            
+            toast.info('File encrypted successfully');
+          } catch (encryptError) {
+            console.error('Encryption failed:', encryptError);
+            toast.warn('Encryption failed, submitting original file');
+            // Continue with original file if encryption fails
+          }
+        }
+
         const jobPayload = {
           ...jobData,
           userId: currentUser.id,
           userName: currentUser.name,
-          file: selectedFile
+          file: fileToSubmit
         };
 
         const result = await submitPrintJob(jobPayload);
+        
+        // Attach encryption metadata to the job for later decryption
+        if (result && encryptedFile) {
+          result.encryption = {
+            iv: encryptedFile.iv,
+            secret: encryptedFile.secret
+          };
+        }
+        
         setLastSubmittedJob(result);
         setCurrentStep(3);
       } catch (err) {
@@ -565,6 +609,7 @@ const PrintJobSubmission = () => {
 
     const removeFile = () => {
       setSelectedFile(null);
+      setEncryptedFile(null);
       setJobData(prev => ({ ...prev, documentName: '' }));
       setCurrentStep(1);
     };

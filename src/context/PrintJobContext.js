@@ -49,9 +49,15 @@ export const PrintJobProvider = ({ children }) => {
         const localJobs = localStorage.getItem('securePrintJobs');
         if (localJobs) {
           const parsedJobs = JSON.parse(localJobs);
-          setPrintJobs(parsedJobs);
-          syncMetadataFromJobs(parsedJobs);
-          console.log('Loaded from localStorage:', parsedJobs.length, 'jobs');
+          // Restore encryption metadata if present
+          const jobsWithEncryption = parsedJobs.map(job => ({
+            ...job,
+            // Ensure encryption field exists
+            encryption: job.encryption || null
+          }));
+          setPrintJobs(jobsWithEncryption);
+          syncMetadataFromJobs(jobsWithEncryption);
+          console.log('Loaded from localStorage:', jobsWithEncryption.length, 'jobs');
         }
       } catch (e) {
         console.warn('Failed to load jobs from localStorage', e);
@@ -144,7 +150,26 @@ export const PrintJobProvider = ({ children }) => {
   // Save print jobs to localStorage whenever they change (for offline access)
   useEffect(() => {
     try {
-      const jobsJson = JSON.stringify(printJobs);
+      // Remove sensitive document data before storing
+      const jobsToStore = printJobs.map(job => {
+        const { document, encryption, ...safeJob } = job;
+        
+        // Only store non-sensitive metadata
+        return {
+          ...safeJob,
+          // Store minimal document info without actual data
+          document: document ? {
+            filename: document.filename || document.name,
+            mimetype: document.mimetype || document.type,
+            size: document.size,
+            // Do NOT store document.data or content
+          } : null,
+          // Store encryption metadata (IV and secret are needed for decryption)
+          encryption: encryption || null
+        };
+      });
+      
+      const jobsJson = JSON.stringify(jobsToStore);
       // Check localStorage size limit (typically 5-10MB)
       const sizeInMB = new Blob([jobsJson]).size / (1024 * 1024);
       if (sizeInMB > 5) {
@@ -156,10 +181,10 @@ export const PrintJobProvider = ({ children }) => {
       if (error.name === 'QuotaExceededError') {
         console.error('localStorage quota exceeded. Document may be too large. Consider using server storage.');
         // Keep jobs without document data for smaller storage
-        const jobsWithoutDocs = printJobs.map(job => ({
-          ...job,
-          document: null // Remove document data to save space
-        }));
+        const jobsWithoutDocs = printJobs.map(job => {
+          const { document, ...rest } = job;
+          return rest;
+        });
         try {
           localStorage.setItem('securePrintJobs', JSON.stringify(jobsWithoutDocs));
           console.warn('Saved jobs without document data due to storage limit');
@@ -215,7 +240,9 @@ export const PrintJobProvider = ({ children }) => {
           } : null,
           viewCount: 0,
           firstViewedAt: null,
-          lastViewedAt: null
+          lastViewedAt: null,
+          // Store encryption metadata if present
+          encryption: jobData.encryption || null
         };
 
         setPrintJobs(prev => [submittedJob, ...prev]);
@@ -290,7 +317,9 @@ export const PrintJobProvider = ({ children }) => {
           releaseLink,
           expiresAt,
           viewCount: 0,
-          document: docData
+          document: docData,
+          // Store encryption metadata
+          encryption: jobData.encryption || null
         };
 
         setPrintJobs(prev => [submittedJob, ...prev]);
@@ -409,9 +438,28 @@ export const PrintJobProvider = ({ children }) => {
 
   const releasePrintJob = async (jobId, printerId, releasedBy, token) => {
     toast.dismiss(); // Clear old toasts
+    
+    const job = printJobs.find(j => j.id === jobId);
+    if (!job) {
+      toast.error('Job not found');
+      throw new Error('Job not found');
+    }
+    
+    // Handle local jobs
     if (jobId.startsWith('local_')) {
-      setPrintJobs(prev => prev.map(job => 
-        job.id === jobId ? { ...job, status: 'released', releasedAt: new Date().toISOString() } : job
+      // Decrypt and print if encrypted
+      if (job.encryption && job.document?.data) {
+        try {
+          await handleEncryptedPrint(job, printerId);
+        } catch (decryptError) {
+          console.error('[AES] Local decryption failed:', decryptError);
+          toast.error('Failed to decrypt file for printing');
+          throw decryptError;
+        }
+      }
+      
+      setPrintJobs(prev => prev.map(jobItem => 
+        jobItem.id === jobId ? { ...jobItem, status: 'released', releasedAt: new Date().toISOString() } : jobItem
       ));
       toast.success('Print job released successfully (Local)!');
       return { success: true };
@@ -427,15 +475,15 @@ export const PrintJobProvider = ({ children }) => {
 
       if (response.data.success) {
         // Update job status and clear document data locally
-        setPrintJobs(prev => prev.map(job => 
-          job.id === jobId 
+        setPrintJobs(prev => prev.map(jobItem => 
+          jobItem.id === jobId 
             ? { 
-                ...job, 
+                ...jobItem, 
                 status: 'released', 
                 releasedAt: new Date().toISOString(),
                 document: null // Clear document data on release
               }
-            : job
+            : jobItem
         ));
 
         toast.success(response.data.message);
@@ -448,8 +496,8 @@ export const PrintJobProvider = ({ children }) => {
       if (error.response?.status === 409) {
         toast.warning('This job has already been released.');
         // Sync state
-        setPrintJobs(prev => prev.map(job => 
-          job.id === jobId ? { ...job, status: 'released' } : job
+        setPrintJobs(prev => prev.map(jobItem => 
+          jobItem.id === jobId ? { ...jobItem, status: 'released' } : jobItem
         ));
       } else {
         toast.error(errorMsg);
@@ -457,6 +505,90 @@ export const PrintJobProvider = ({ children }) => {
       throw new Error(errorMsg);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Helper function to handle encrypted printing for local jobs
+  const handleEncryptedPrint = async (job, printerId) => {
+    if (!job.encryption || !job.document?.data) {
+      // Non-encrypted file - create URL directly
+      const mimeType = job.document.mimetype || 'application/octet-stream';
+      const blob = new Blob([job.document.data], { type: mimeType });
+      const printUrl = URL.createObjectURL(blob);
+      
+      // Create hidden iframe for printing
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      iframe.src = printUrl;
+      document.body.appendChild(iframe);
+      
+      iframe.onload = () => {
+        setTimeout(() => {
+          iframe.contentWindow.print();
+          // Clean up
+          setTimeout(() => {
+            document.body.removeChild(iframe);
+            URL.revokeObjectURL(printUrl);
+          }, 1000);
+        }, 500);
+      };
+      
+      return;
+    }
+    
+    // Encrypted file - decrypt first
+    try {
+      const { decryptFileAES, clearSensitiveData } = await import('../utils/aesCrypto');
+      
+      // Convert stored data back to ArrayBuffer
+      const encryptedData = job.document.data instanceof ArrayBuffer 
+        ? job.document.data 
+        : new Uint8Array(Object.values(job.document.data)).buffer;
+      
+      const iv = new Uint8Array(job.encryption.iv);
+      
+      // Decrypt the file
+      const decryptedBuffer = await decryptFileAES(encryptedData, iv, job.encryption.secret);
+      
+      // Create blob for printing
+      const mimeType = job.document.mimetype || 'application/octet-stream';
+      const blob = new Blob([decryptedBuffer], { type: mimeType });
+      const printUrl = URL.createObjectURL(blob);
+      
+      console.log('[AES] File decrypted for local printing');
+      
+      // Create hidden iframe for printing
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      iframe.src = printUrl;
+      document.body.appendChild(iframe);
+      
+      // Wait for iframe to load, then print
+      iframe.onload = () => {
+        setTimeout(() => {
+          iframe.contentWindow.print();
+          
+          // Clean up after printing
+          setTimeout(() => {
+            document.body.removeChild(iframe);
+            URL.revokeObjectURL(printUrl);
+            
+            // Clear sensitive data from memory
+            clearSensitiveData(decryptedBuffer);
+            console.log('[AES] Local print completed and memory cleared');
+          }, 1000);
+        }, 500);
+      };
+      
+    } catch (error) {
+      console.error('[AES] Decryption failed for local print:', error);
+      throw error;
     }
   };
 
