@@ -699,10 +699,36 @@ const PrintRelease = () => {
     ? userJobs.filter(j => j.id === linkTargetJobId)
     : userJobs;
 
+  // Helper functions for button states
+  const isJobWithinTimeLimit = (job) => {
+    if (!job.expiresAt) return true;
+    return new Date(job.expiresAt) > new Date();
+  };
+
+  const isJobValidForPrinting = (job) => {
+    // Must be within time limit AND have document data (or be able to fetch it)
+    return isJobWithinTimeLimit(job);
+  };
+
+  const getPrintButtonTitle = (job) => {
+    if (!isJobWithinTimeLimit(job)) {
+      return 'Print link has expired';
+    }
+    return 'Print Document';
+  };
+
+  const getReleaseButtonTitle = (job) => {
+    if (loading) return 'Releasing...';
+    if (!selectedPrinter) return 'Select a printer first';
+    if (job.viewCount === 0) return 'Must view document first';
+    if (!isJobWithinTimeLimit(job)) return 'Print link has expired';
+    return 'Release job to printer';
+  };
+
   // BUGFIX: Ensure document data is available for display
   // If cachedDocument exists, attach it to jobs that don't have document data
   const jobsWithDocuments = jobsToShow.map(job => {
-    // Priority 1: Job already has document
+    // Priority 1: Job already has document with dataUrl
     if (job.document?.dataUrl) {
       return job;
     }
@@ -711,8 +737,8 @@ const PrintRelease = () => {
       console.log(`Attaching cached document to job ${job.id}`);
       return { ...job, document: cachedDocument };
     }
-    // Priority 3: No document available
-    console.warn(`Job ${job.id} (${job.documentName}) has no document data`);
+    // Priority 3: No document available - this is fine, buttons will fetch when clicked
+    console.log(`Job ${job.id} (${job.documentName}) has no document data yet`);
     return job;
   });
 
@@ -755,14 +781,32 @@ const PrintRelease = () => {
       return;
     }
 
+    // Find the job to check view count
+    const job = jobsWithDocuments.find(j => j.id === jobId);
+    if (!job) {
+      toast.error('Job not found');
+      return;
+    }
+
+    // Security: Must view document before releasing
+    if (job.viewCount === 0) {
+      toast.error('Must view document first before releasing');
+      return;
+    }
+
+    // Security: Check if within time limit
+    if (!isJobWithinTimeLimit(job)) {
+      toast.info('Print link has expired');
+      return;
+    }
+
     setLoading(true);
     try {
       const token = new URLSearchParams(location.search).get('token');
       await releasePrintJob(jobId, selectedPrinter.id, authenticatedUser.id, token);
       toast.success('Print job released successfully! You can release it again until the link expires.');
       
-      // Cache document for future use
-      const job = serverJob || printJobs.find(j => j.id === jobId);
+      // Cache document for future use if we have it
       if (job?.document && !cachedDocument) {
         setCachedDocument(job.document);
       }
@@ -787,10 +831,41 @@ const PrintRelease = () => {
     setLoading(true);
     try {
       const token = new URLSearchParams(location.search).get('token');
+      let successCount = 0;
+      let errorCount = 0;
+      
       for (const job of jobsWithDocuments) {
-        await releasePrintJob(job.id, selectedPrinter.id, authenticatedUser.id, token);
+        // Check security constraints for each job
+        if (job.viewCount === 0) {
+          errorCount++;
+          console.warn(`Skipping job ${job.id}: Document not viewed`);
+          continue;
+        }
+        
+        if (!isJobWithinTimeLimit(job)) {
+          errorCount++;
+          console.warn(`Skipping job ${job.id}: Link expired`);
+          continue;
+        }
+        
+        try {
+          await releasePrintJob(job.id, selectedPrinter.id, authenticatedUser.id, token);
+          successCount++;
+          // Cache document if we have it
+          if (job?.document && !cachedDocument) {
+            setCachedDocument(job.document);
+          }
+        } catch (error) {
+          errorCount++;
+          console.error(`Failed to release job ${job.id}:`, error.message);
+        }
       }
-      toast.success('All print jobs released successfully! You can release them again until the links expire.');
+      
+      if (successCount > 0) {
+        toast.success(`Successfully released ${successCount} job(s)! ${errorCount > 0 ? `(${errorCount} skipped due to constraints)` : ''}`);
+      } else if (errorCount > 0) {
+        toast.error(`Could not release any jobs. Check that documents are viewed and links are not expired.`);
+      }
     } catch (error) {
       const errorMsg = error.message || 'Failed to release some print jobs';
       if (errorMsg.includes('expired')) {
@@ -833,9 +908,42 @@ const PrintRelease = () => {
     }
   };
 
-  const handleViewDocument = (job) => {
-    // Use cached document first, fallback to job document
-    const documentData = cachedDocument || job?.document;
+  const handleViewDocument = async (job) => {
+    // Security: Check if already viewed (single-use enforcement)
+    if (job.viewCount > 0) {
+      toast.error('Document already viewed (one-time only)');
+      return;
+    }
+    
+    // Use cached document first, fallback to job document, then fetch from server
+    let documentData = cachedDocument || job?.document;
+    
+    // If no document data, try to fetch it
+    if (!documentData?.dataUrl) {
+      try {
+        setLoading(true);
+        // Try to view the job to get document data
+        const fetchedData = await viewPrintJob(job.id, job.secureToken, authenticatedUser?.id || 'anonymous');
+        if (fetchedData?.dataUrl) {
+          documentData = fetchedData;
+          // Cache it for future use
+          setCachedDocument(fetchedData);
+          // Update job in state
+          const updatedJobs = jobsWithDocuments.map(j => 
+            j.id === job.id ? { ...j, document: fetchedData } : j
+          );
+          // We can't update the state directly here, but the cache will help
+        }
+      } catch (error) {
+        console.error('Failed to fetch document for viewing:', error);
+        toast.error('Document not available for preview: ' + error.message);
+        setLoading(false);
+        return;
+      } finally {
+        setLoading(false);
+      }
+    }
+    
     if (!documentData?.dataUrl) {
       toast.warning('Document not available for preview');
       return;
@@ -936,9 +1044,37 @@ const PrintRelease = () => {
     }
   };
 
-  const handlePrintDocument = (job) => {
-    // Use cached document first, fallback to job document
-    const documentData = cachedDocument || job?.document;
+  const handlePrintDocument = async (job) => {
+    // Security: Check if within time limit
+    if (!isJobWithinTimeLimit(job)) {
+      toast.info('Print link has expired');
+      return;
+    }
+    
+    // Use cached document first, fallback to job document, then fetch from server
+    let documentData = cachedDocument || job?.document;
+    
+    // If no document data, try to fetch it
+    if (!documentData?.dataUrl) {
+      try {
+        setLoading(true);
+        // Try to view the job to get document data (this gives us the document for printing)
+        const fetchedData = await viewPrintJob(job.id, job.secureToken, authenticatedUser?.id || 'anonymous');
+        if (fetchedData?.dataUrl) {
+          documentData = fetchedData;
+          // Cache it for future use
+          setCachedDocument(fetchedData);
+        }
+      } catch (error) {
+        console.error('Failed to fetch document for printing:', error);
+        toast.error('Document not available for printing: ' + error.message);
+        setLoading(false);
+        return;
+      } finally {
+        setLoading(false);
+      }
+    }
+    
     if (!documentData?.dataUrl) {
       toast.warning('Document not available for printing');
       return;
@@ -1213,18 +1349,20 @@ const PrintRelease = () => {
                           <div className="job-actions">
                             <ActionButton 
                               className="secondary"
-                              onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
-                              title={job.document?.dataUrl ? "View Document" : "No preview available"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                              onClick={() => handleViewDocument(job)}
+                              disabled={job.viewCount > 0}
+                              title={job.viewCount > 0 ? 'Document already viewed (one-time only)' : 'View Document'}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.viewCount > 0 ? 0.6 : 1 }}
                             >
                               <FaEye style={{ marginRight: '4px' }} />
                               View
                             </ActionButton>
                             <ActionButton 
                               className="secondary"
-                              onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
-                              title={job.document?.dataUrl ? "Print Document" : "No preview available"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                              onClick={() => handlePrintDocument(job)}
+                              disabled={!isJobValidForPrinting(job)}
+                              title={getPrintButtonTitle(job)}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: isJobValidForPrinting(job) ? 1 : 0.6 }}
                             >
                               <FaPrint style={{ marginRight: '4px' }} />
                               Print
@@ -1232,8 +1370,8 @@ const PrintRelease = () => {
                             <ActionButton 
                               className="primary"
                               onClick={() => handleReleaseJob(job.id)}
-                              disabled={loading || !selectedPrinter}
-                              title="Release job to printer (document will be available after release)"
+                              disabled={loading || !selectedPrinter || job.viewCount === 0 || !isJobWithinTimeLimit(job)}
+                              title={getReleaseButtonTitle(job)}
                             >
                               Release
                             </ActionButton>
