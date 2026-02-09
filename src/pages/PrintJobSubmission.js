@@ -28,6 +28,15 @@ const SubmissionContainer = styled.div`
   padding: 20px;
   max-width: 800px;
   margin: 0 auto;
+  
+  @media (max-width: 768px) {
+    padding: 15px;
+    max-width: 100%;
+  }
+  
+  @media (max-width: 480px) {
+    padding: 10px;
+  }
 `;
 
 const PageHeader = styled.div`
@@ -45,6 +54,28 @@ const PageHeader = styled.div`
     color: #7f8c8d;
     font-size: 16px;
   }
+  
+  @media (max-width: 768px) {
+    margin-bottom: 20px;
+    
+    h1 {
+      font-size: 24px;
+    }
+    
+    p {
+      font-size: 14px;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    h1 {
+      font-size: 20px;
+    }
+    
+    p {
+      font-size: 13px;
+    }
+  }
 `;
 
 const SubmissionCard = styled.div`
@@ -52,6 +83,15 @@ const SubmissionCard = styled.div`
   border-radius: 12px;
   padding: 30px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  
+  @media (max-width: 768px) {
+    padding: 20px;
+    border-radius: 8px;
+  }
+  
+  @media (max-width: 480px) {
+    padding: 15px;
+  }
 `;
 
 const StepIndicator = styled.div`
@@ -88,6 +128,53 @@ const StepIndicator = styled.div`
       height: 2px;
       background: #ecf0f1;
       margin: 0 10px;
+    }
+  }
+  
+  @media (max-width: 768px) {
+    flex-direction: column;
+    gap: 15px;
+    margin-bottom: 20px;
+    
+    .step {
+      &:not(:last-child)::after {
+        content: '';
+        width: 2px;
+        height: 30px;
+        background: #ecf0f1;
+        margin: 10px 0 0 15px;
+      }
+    }
+    
+    .step-number {
+      width: 25px;
+      height: 25px;
+      font-size: 12px;
+    }
+    
+    .step-text {
+      font-size: 14px;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    .step {
+      gap: 8px;
+      
+      &:not(:last-child)::after {
+        margin: 8px 0 0 12px;
+        height: 25px;
+      }
+    }
+    
+    .step-number {
+      width: 22px;
+      height: 22px;
+      font-size: 11px;
+    }
+    
+    .step-text {
+      font-size: 13px;
     }
   }
 `;
@@ -138,6 +225,53 @@ const FileUploadSection = styled.div`
       background: #2980b9;
     }
   }
+  
+  @media (max-width: 768px) {
+    padding: 30px 20px;
+    margin-bottom: 20px;
+    
+    .upload-icon {
+      font-size: 36px;
+      margin-bottom: 12px;
+    }
+    
+    .upload-text {
+      font-size: 16px;
+      margin-bottom: 6px;
+    }
+    
+    .upload-hint {
+      font-size: 13px;
+      margin-bottom: 15px;
+    }
+    
+    .upload-button {
+      padding: 10px 20px;
+      font-size: 14px;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    padding: 25px 15px;
+    
+    .upload-icon {
+      font-size: 32px;
+    }
+    
+    .upload-text {
+      font-size: 15px;
+    }
+    
+    .upload-hint {
+      font-size: 12px;
+    }
+    
+    .upload-button {
+      padding: 8px 16px;
+      font-size: 13px;
+      width: 100%;
+    }
+  }
 `;
 
 const FilePreview = styled.div`
@@ -185,6 +319,52 @@ const FilePreview = styled.div`
     
     &:hover {
       background: #f8d7da;
+    }
+  }
+  
+  @media (max-width: 768px) {
+    gap: 12px;
+    padding: 12px;
+    
+    .file-icon {
+      width: 35px;
+      height: 35px;
+    }
+    
+    .file-info {
+      .file-name {
+        font-size: 14px;
+        margin-bottom: 2px;
+      }
+      
+      .file-size {
+        font-size: 11px;
+      }
+    }
+    
+    .remove-file {
+      padding: 6px;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    flex-direction: column;
+    text-align: center;
+    gap: 10px;
+    
+    .file-icon {
+      width: 30px;
+      height: 30px;
+    }
+    
+    .file-info {
+      .file-name {
+        font-size: 13px;
+      }
+      
+      .file-size {
+        font-size: 10px;
+      }
     }
   }
 `;
