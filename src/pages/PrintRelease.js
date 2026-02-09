@@ -720,6 +720,7 @@ const PrintRelease = () => {
   const getReleaseButtonTitle = (job) => {
     if (loading) return 'Releasing...';
     if (!selectedPrinter) return 'Select a printer first';
+    if (job.viewCount === 0) return 'Must view document first';
     if (!isJobWithinTimeLimit(job)) return 'Print link has expired';
     return 'Release job to printer';
   };
@@ -911,7 +912,7 @@ const PrintRelease = () => {
         }
       } catch (error) {
         console.error('Failed to fetch document for viewing:', error);
-        toast.error('Document not available for preview: ' + error.message);
+        toast.error('Failed to load document: ' + error.message);
         setLoading(false);
         return;
       } finally {
@@ -920,7 +921,7 @@ const PrintRelease = () => {
     }
     
     if (!documentData?.dataUrl) {
-      toast.warning('Document not available for preview');
+      toast.error('Document content not available for preview');
       return;
     }
 
@@ -939,6 +940,11 @@ const PrintRelease = () => {
         // Convert to blob URL for PDFs (avoids data URL size limits)
         const blobUrl = convertDataUrlToBlob(dataUrl);
         const printWindow = window.open(blobUrl, '_blank');
+        
+        if (!printWindow) {
+          toast.error('Failed to open print window. Please check popup blocker.');
+          return;
+        }
         
         // Cleanup blob URL after window loads
         if (blobUrl !== dataUrl && printWindow) {
@@ -1041,7 +1047,7 @@ const PrintRelease = () => {
         }
       } catch (error) {
         console.error('Failed to fetch document for printing:', error);
-        toast.error('Document not available for printing: ' + error.message);
+        toast.error('Failed to load document: ' + error.message);
         setLoading(false);
         return;
       } finally {
@@ -1050,7 +1056,7 @@ const PrintRelease = () => {
     }
     
     if (!documentData?.dataUrl) {
-      toast.warning('Document not available for printing');
+      toast.error('Document content not available for printing');
       return;
     }
 
