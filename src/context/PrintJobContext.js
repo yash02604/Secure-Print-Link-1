@@ -366,16 +366,15 @@ export const PrintJobProvider = ({ children }) => {
       const now = new Date().toISOString();
       const job = printJobs.find(j => j.id === jobId);
       
-      if (job?.viewCount > 0) {
-        toast.error('Document already viewed (one-time only)');
-        throw new Error('Document already viewed');
-      }
-
+      // REMOVED: Single-view enforcement check
+      // Job can be viewed multiple times
+      
+      // Update view timestamps but don't increment viewCount
       setPrintJobs(prev => prev.map(j => 
-        j.id === jobId ? { ...j, viewCount: 1, firstViewedAt: now, lastViewedAt: now } : j
+        j.id === jobId ? { ...j, firstViewedAt: now, lastViewedAt: now } : j
       ));
 
-      toast.success('Document preview opened (Local)');
+      toast.success('Document preview opened (Local - Multiple views allowed)');
       return job?.document;
     }
 
@@ -387,27 +386,23 @@ export const PrintJobProvider = ({ children }) => {
       });
 
       if (response.data.success) {
-        // Update job in state
+        // Update job in state (don't increment viewCount to allow multiple views)
         setPrintJobs(prev => prev.map(job => 
           job.id === jobId 
             ? { 
                 ...job, 
-                viewCount: response.data.viewCount,
-                firstViewedAt: response.data.firstViewedAt,
                 document: response.data.document
               }
             : job
         ));
 
-        // Update expiration metadata
+        // Update expiration metadata (don't change viewCount)
         setExpirationMetadata(prev => {
           const newMap = new Map(prev);
           const metadata = newMap.get(jobId);
           if (metadata) {
             newMap.set(jobId, {
-              ...metadata,
-              viewCount: response.data.viewCount,
-              firstViewedAt: response.data.firstViewedAt
+              ...metadata
             });
           }
           return newMap;
@@ -418,16 +413,10 @@ export const PrintJobProvider = ({ children }) => {
       }
     } catch (error) {
       console.error('Error viewing job:', error);
-      if (error.response?.data?.alreadyViewed) {
-        toast.error('Document already viewed (one-time only)');
-        // Update state to reflect this
-        setPrintJobs(prev => prev.map(job => 
-          job.id === jobId 
-            ? { ...job, viewCount: error.response.data.viewCount || 1 }
-            : job
-        ));
-        throw new Error('Document already viewed');
-      } else if (error.response?.data?.error) {
+      // REMOVED: Single-view error handling
+      // No "Document already viewed" errors
+      
+      if (error.response?.data?.error) {
         throw new Error(error.response.data.error);
       }
       throw new Error('Failed to view document');

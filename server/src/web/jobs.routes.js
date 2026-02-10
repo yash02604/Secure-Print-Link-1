@@ -192,7 +192,7 @@ router.post('/', (req, res, next) => {
   }
 });
 
-// Get job by id + token (with single-view enforcement)
+// Get job by id + token (without single-view enforcement)
 router.get('/:id', (req, res) => {
   const db = req.db;
   const { id } = req.params;
@@ -230,15 +230,9 @@ router.get('/:id', (req, res) => {
   if (!job) return res.status(404).json({ error: 'Job not found' });
   if (token && token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
 
-  // Check if job has been viewed already (single-view enforcement)
-  if (job.viewCount > 0) {
-    return res.status(403).json({ 
-      error: 'Document already viewed (one-time only)',
-      alreadyViewed: true,
-      viewCount: job.viewCount
-    });
-  }
-
+  // REMOVED: Single-view enforcement check
+  // Job can be viewed multiple times until expiration
+  
   // Fetch document from DB if available
   try {
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
@@ -279,7 +273,7 @@ router.get('/:id', (req, res) => {
   res.json({ job });
 });
 
-// View job document (single-use only)
+// View job document (multiple views allowed)
 router.post('/:id/view', (req, res) => {
   const db = req.db;
   const { id } = req.params;
@@ -319,24 +313,14 @@ router.post('/:id/view', (req, res) => {
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
     
-    // SINGLE-USE ENFORCEMENT: Check if already viewed
-    if (job.viewCount > 0) {
-      return res.status(403).json({ 
-        error: 'Document already viewed (one-time only)',
-        alreadyViewed: true,
-        viewCount: job.viewCount
-      });
-    }
-
-    // Record the view
+    // REMOVED: Single-view enforcement check
+    // Job can be viewed multiple times until expiration
+    
+    // Record the view (but don't prevent future views)
     const now = new Date().toISOString();
     const viewId = nanoid();
     
-    // Update job view count and timestamps
-    db.prepare('UPDATE jobs SET viewCount = viewCount + 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
-      .run(now, now, id);
-    
-    // Log the view for audit trail
+    // Log the view for audit trail (don't increment viewCount to allow multiple views)
     db.prepare(`INSERT INTO job_views (id, jobId, userId, viewedAt, userAgent, ipAddress) 
       VALUES (?, ?, ?, ?, ?, ?)`)
       .run(
@@ -347,15 +331,12 @@ router.post('/:id/view', (req, res) => {
         req.headers['user-agent'] || '', 
         req.ip || req.connection.remoteAddress || ''
       );
-
-    // Update in-memory metadata
+    
+    // Update in-memory metadata (don't change viewCount)
     if (metadata) {
-      metadata.viewCount = 1;
-      metadata.firstViewedAt = now;
-      expirationMetadata.set(id, metadata);
-      console.log(`[View] Job ${id} viewed for the first time by user ${userId}`);
+      console.log(`[View] Job ${id} viewed by user ${userId} (multiple views allowed)`);
     }
-
+    
     // Return document data for preview (NOT download)
     let documentData = null;
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
@@ -376,13 +357,12 @@ router.post('/:id/view', (req, res) => {
         name: metadata.originalname || job.documentName
       };
     }
-
+    
     res.json({ 
       success: true, 
       document: documentData,
-      viewCount: 1,
-      firstViewedAt: now,
-      message: 'Document preview opened. This was a one-time view - the button is now permanently disabled.'
+      viewCount: job.viewCount, // Return original view count
+      message: 'Document preview opened. Multiple views allowed until expiration.'
     });
   } catch (err) {
     console.error('Error during job view:', err);

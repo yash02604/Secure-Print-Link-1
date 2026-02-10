@@ -9,7 +9,6 @@ import {
   FaPrint, 
   FaTrash, 
   FaEye, 
-  FaTimes,
   FaCheckCircle,
   FaExclamationTriangle,
   FaClock,
@@ -406,11 +405,9 @@ const PrintJobQueue = () => {
       return;
     }
     
-    if (job.viewCount > 0) {
-      toast.error('Document already viewed (one-time only)');
-      return;
-    }
-
+    // REMOVED: Single-view enforcement check
+    // Job can be viewed multiple times until expiration
+    
     try {
       const documentData = await viewPrintJob(jobId, job.secureToken, currentUser.id);
       if (documentData?.dataUrl) {
@@ -420,10 +417,6 @@ const PrintJobQueue = () => {
         toast.error('Document data not available for viewing.');
       }
     } catch (error) {
-      if (error.message === 'Document already viewed') {
-        // Already handled by viewPrintJob
-        return;
-      }
       toast.error('Failed to view document: ' + error.message);
     }
   };
@@ -625,14 +618,13 @@ const PrintJobQueue = () => {
                 <JobActions>
                   <ActionButton
                     onClick={() => handleViewJob(job.id)}
-                    disabled={job.viewCount > 0}
-                    title={job.viewCount > 0 ? 'Document already viewed (one-time only)' : 'Preview document (one-time view)'}
-                    className={job.viewCount > 0 ? 'danger' : 'success'}
+                    title="Preview document (multiple views allowed)"
+                    className="success"
                   >
-                    {job.viewCount > 0 ? <FaTimes /> : <FaEye />}
+                    <FaEye />
                   </ActionButton>
                   
-                  {job.status === 'pending' && job.viewCount > 0 && (
+                  {job.status === 'pending' && (
                     <ActionButton
                       onClick={() => handleReleaseJob(job.id)}
                       disabled={loading}
