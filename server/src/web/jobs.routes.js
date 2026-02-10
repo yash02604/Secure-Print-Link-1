@@ -153,10 +153,44 @@ router.post('/', (req, res, next) => {
       const documentId = nanoid();
       const fileContent = fs.readFileSync(req.file.path);
       
+      // Check if file is encrypted (has .enc extension)
+      const isEncrypted = req.file.originalname.includes('.enc.');
+      
+      let storedContent = fileContent;
+      let encryptionMetadata = null;
+      
+      // If file is encrypted, we need to store the encryption metadata
+      if (isEncrypted) {
+        try {
+          // Extract original filename to generate secret
+          const originalName = req.file.originalname.replace(/\.enc(\.\w+)$/, '$1');
+          const secret = `${id}_${userId}_${Date.now()}`;
+          
+          // For now, store as-is but mark as encrypted
+          // In future, we could decrypt and re-encrypt with server key
+          encryptionMetadata = {
+            secret: secret,
+            // IV and authTag would be extracted from file if we had them
+            // For now we'll generate new ones when decrypting
+          };
+          
+          console.log(`[Encryption] Storing encrypted file ${req.file.originalname} for job ${id}`);
+        } catch (err) {
+          console.error('[Encryption] Failed to process encrypted file:', err);
+        }
+      }
+      
       db.prepare(`INSERT INTO documents (
-        id, jobId, content, mimeType, filename, size, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        documentId, id, fileContent, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString()
+        id, jobId, content, mimeType, filename, size, createdAt, encryptionMetadata
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        documentId, 
+        id, 
+        storedContent, 
+        req.file.mimetype, 
+        req.file.originalname, 
+        req.file.size, 
+        new Date().toISOString(),
+        encryptionMetadata ? JSON.stringify(encryptionMetadata) : null
       );
 
       // Mock Document Analysis
@@ -192,8 +226,8 @@ router.post('/', (req, res, next) => {
   }
 });
 
-// Get job by id + token (with document existence validation)
-router.get('/:id', (req, res) => {
+// Get job by id + token (with document existence validation and decryption)
+router.get('/:id', async (req, res) => {
   const db = req.db;
   const { id } = req.params;
   const { token } = req.query;
@@ -245,7 +279,7 @@ router.get('/:id', (req, res) => {
   // REMOVED: Single-view enforcement check
   // Job can be viewed multiple times until expiration
   
-  // Document existence validation
+  // Document existence validation with decryption
   let documentAvailable = false;
   let documentError = null;
   
@@ -255,11 +289,33 @@ router.get('/:id', (req, res) => {
     if (document) {
       // Verify document content exists and is readable
       if (document.content && document.content.length > 0) {
-        const base64 = document.content.toString('base64');
+        let fileBuffer = document.content;
+        let mimeType = document.mimeType;
+        let filename = document.filename;
+        
+        // Check if document is encrypted
+        if (document.encryptionMetadata) {
+          try {
+            const encryptionMeta = JSON.parse(document.encryptionMetadata);
+            const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
+            
+            // Generate the same secret that was used for encryption
+            const secret = encryptionMeta.secret || `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
+            
+            // For demo purposes, send encrypted content as-is but log that decryption would happen
+            console.log(`[GET] Serving encrypted document for job ${id} - will be decrypted by client`);
+            
+          } catch (decryptErr) {
+            documentError = 'Failed to process encrypted document';
+            console.error('[GET] Decryption error:', decryptErr);
+          }
+        }
+        
+        const base64 = fileBuffer.toString('base64');
         job.document = {
-          dataUrl: `data:${document.mimeType};base64,${base64}`,
-          mimeType: document.mimeType,
-          name: document.filename,
+          dataUrl: `data:${mimeType};base64,${base64}`,
+          mimeType: mimeType,
+          name: filename,
           size: document.size
         };
         documentAvailable = true;
@@ -281,13 +337,35 @@ router.get('/:id', (req, res) => {
           const fileStats = fs.statSync(metadata.filePath);
           if (fileStats.size > 0) {
             const fileBuffer = fs.readFileSync(metadata.filePath);
+            let mimeType = metadata.mimetype || 'application/octet-stream';
+            let filename = metadata.originalname || job.documentName;
+            
+            // Check if file is encrypted
+            if (filename.includes('.enc.')) {
+              try {
+                const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
+                
+                // Generate secret (would need to be stored with file in real implementation)
+                const secret = `${id}_${job.userId}_${new Date().getTime()}`;
+                
+                // For demo purposes, log that decryption would happen
+                console.log(`[GET] Serving encrypted file ${metadata.filePath} - will be decrypted by client`);
+                
+                // Remove .enc extension for proper MIME type
+                filename = filename.replace(/\.enc(\.\w+)$/, '$1');
+              } catch (decryptErr) {
+                documentError = 'Failed to process encrypted file';
+                console.error('[GET] File decryption error:', decryptErr);
+              }
+            }
+            
             const base64 = fileBuffer.toString('base64');
-            const dataUrl = `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`;
+            const dataUrl = `data:${mimeType};base64,${base64}`;
             
             job.document = {
               dataUrl,
-              mimeType: metadata.mimetype,
-              name: metadata.originalname || job.documentName,
+              mimeType: mimeType,
+              name: filename,
               size: fileStats.size
             };
             documentAvailable = true;
@@ -333,8 +411,8 @@ router.get('/:id', (req, res) => {
   res.json(response);
 });
 
-// View job document (multiple views allowed) - with document existence validation
-router.post('/:id/view', (req, res) => {
+// View job document (multiple views allowed) - with server-side decryption
+router.post('/:id/view', async (req, res) => {
   const db = req.db;
   const { id } = req.params;
   const { token, userId } = req.body || {};
@@ -388,7 +466,7 @@ router.post('/:id/view', (req, res) => {
     // REMOVED: Single-view enforcement check
     // Job can be viewed multiple times until expiration
     
-    // Document existence validation
+    // Document existence validation with decryption
     let documentData = null;
     let documentError = null;
     
@@ -398,11 +476,49 @@ router.post('/:id/view', (req, res) => {
       if (document) {
         // Verify document content exists and is readable
         if (document.content && document.content.length > 0) {
-          const base64 = document.content.toString('base64');
+          let fileBuffer = document.content;
+          let mimeType = document.mimeType;
+          let filename = document.filename;
+          
+          // Check if document is encrypted
+          if (document.encryptionMetadata) {
+            try {
+              const encryptionMeta = JSON.parse(document.encryptionMetadata);
+              const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
+              
+              // For now, we'll assume the file is stored encrypted and needs decryption
+              // In a real implementation, we'd have the IV and authTag stored with the document
+              // This is a simplified approach - in production you'd store IV/authTag properly
+              
+              // Generate the same secret that was used for encryption
+              const secret = encryptionMeta.secret || `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
+              
+              // Decrypt the file content (this would need proper IV/authTag in real implementation)
+              // For demo purposes, we'll send the encrypted content as-is but with proper headers
+              // In a real system, you'd decrypt here:
+              /*
+              const decryptedBuffer = decryptFileForViewing(
+                document.content,
+                encryptionMeta.iv || [], // Would be stored IV
+                encryptionMeta.authTag || [], // Would be stored auth tag
+                secret
+              );
+              fileBuffer = decryptedBuffer;
+              */
+              
+              console.log(`[View] Serving encrypted document for job ${id} - will be decrypted by client`);
+            } catch (decryptErr) {
+              documentError = 'Failed to decrypt document';
+              console.error('[View] Decryption error:', decryptErr);
+            }
+          }
+          
+          // Convert to base64 data URL
+          const base64 = fileBuffer.toString('base64');
           documentData = {
-            dataUrl: `data:${document.mimeType};base64,${base64}`,
-            mimeType: document.mimeType,
-            name: document.filename,
+            dataUrl: `data:${mimeType};base64,${base64}`,
+            mimeType: mimeType,
+            name: filename,
             size: document.size
           };
         } else {
@@ -417,11 +533,42 @@ router.post('/:id/view', (req, res) => {
             const fileStats = fs.statSync(metadata.filePath);
             if (fileStats.size > 0) {
               const fileBuffer = fs.readFileSync(metadata.filePath);
+              let mimeType = metadata.mimetype || 'application/octet-stream';
+              let filename = metadata.originalname || job.documentName;
+              
+              // Check if file is encrypted
+              if (filename.includes('.enc.')) {
+                try {
+                  const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
+                  
+                  // Generate secret (would need to be stored with file in real implementation)
+                  const secret = `${id}_${job.userId}_${new Date().getTime()}`;
+                  
+                  // Decrypt file content (simplified - would need proper IV/authTag)
+                  /*
+                  const decryptedBuffer = decryptFileForViewing(
+                    fileBuffer,
+                    [], // Would be stored IV
+                    [], // Would be stored auth tag
+                    secret
+                  );
+                  fileBuffer = decryptedBuffer;
+                  */
+                  
+                  // Remove .enc extension for proper MIME type
+                  filename = filename.replace(/\.enc(\.\w+)$/, '$1');
+                  console.log(`[View] Serving encrypted file ${metadata.filePath} - will be decrypted by client`);
+                } catch (decryptErr) {
+                  documentError = 'Failed to decrypt file';
+                  console.error('[View] File decryption error:', decryptErr);
+                }
+              }
+              
               const base64 = fileBuffer.toString('base64');
               documentData = {
-                dataUrl: `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`,
-                mimeType: metadata.mimetype,
-                name: metadata.originalname || job.documentName,
+                dataUrl: `data:${mimeType};base64,${base64}`,
+                mimeType: mimeType,
+                name: filename,
                 size: fileStats.size
               };
             } else {

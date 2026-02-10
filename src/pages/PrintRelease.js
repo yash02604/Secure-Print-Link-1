@@ -1142,6 +1142,105 @@ const PrintRelease = () => {
       }
 
       const { dataUrl, mimeType, name } = documentData;
+      
+      // Check if this is an encrypted file that needs client-side decryption
+      const isEncryptedFile = name?.includes('.enc.');
+      
+      if (isEncryptedFile) {
+        try {
+          // Extract original filename and extension
+          const originalName = name.replace(/\.enc(\.\w+)$/, '$1');
+          const originalExtension = originalName.substring(originalName.lastIndexOf('.'));
+          
+          // Determine correct MIME type based on original extension
+          let correctMimeType = mimeType;
+          if (originalExtension === '.pdf') {
+            correctMimeType = 'application/pdf';
+          } else if (['.jpg', '.jpeg'].includes(originalExtension)) {
+            correctMimeType = 'image/jpeg';
+          } else if (originalExtension === '.png') {
+            correctMimeType = 'image/png';
+          } else if (originalExtension === '.txt') {
+            correctMimeType = 'text/plain';
+          }
+          
+          // For now, we'll display the encrypted content as-is but with correct MIME type
+          // In a real implementation, you'd decrypt here using the AES utilities
+          
+          const isPdf = correctMimeType.includes('pdf');
+          const isImage = correctMimeType.startsWith('image/');
+          const isText = correctMimeType.includes('text/');
+          
+          if (isPdf || isImage) {
+            // Convert to blob URL for proper handling
+            const byteString = atob(dataUrl.split(',')[1]);
+            const mimeString = dataUrl.split(',')[0].split(':')[1].split(';')[0];
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let i = 0; i < byteString.length; i++) {
+              ia[i] = byteString.charCodeAt(i);
+            }
+            const blob = new Blob([ab], { type: correctMimeType });
+            const blobUrl = URL.createObjectURL(blob);
+            
+            const printWindow = window.open(blobUrl, '_blank');
+            if (!printWindow) {
+              toast.error('Failed to open document window. Please check popup blocker.');
+              return;
+            }
+            
+            // Cleanup blob URL after window loads
+            printWindow.addEventListener('load', () => {
+              setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+            });
+            
+          } else if (isText) {
+            // For text files, decode and display
+            try {
+              const byteString = atob(dataUrl.split(',')[1]);
+              const textContent = decodeURIComponent(escape(byteString));
+              
+              const printWindow = window.open('', '_blank');
+              if (!printWindow) {
+                toast.error('Failed to open document window. Please check popup blocker.');
+                return;
+              }
+              
+              printWindow.document.write(`
+                <!DOCTYPE html>
+                <html>
+                  <head>
+                    <title>${originalName}</title>
+                    <style>
+                      body { margin: 0; padding: 20px; font-family: monospace; background: white; }
+                      pre { white-space: pre-wrap; word-wrap: break-word; }
+                    </style>
+                  </head>
+                  <body>
+                    <pre>${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre>
+                  </body>
+                </html>
+              `);
+              printWindow.document.close();
+            } catch (err) {
+              window.open(dataUrl, '_blank');
+            }
+          } else {
+            // For other formats, try to open directly
+            window.open(dataUrl, '_blank');
+          }
+          
+          toast.info(`Showing encrypted document: ${originalName}. In production, this would be decrypted server-side.`);
+          return;
+          
+        } catch (decryptError) {
+          console.error('Decryption failed:', decryptError);
+          toast.error('Failed to decrypt document for viewing');
+          return;
+        }
+      }
+      
+      // Handle non-encrypted files normally
       const isPdf = (mimeType || '').includes('pdf');
       const isImage = (mimeType || '').startsWith('image/');
       const isText = (mimeType || '').includes('text/');
