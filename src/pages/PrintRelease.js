@@ -17,6 +17,15 @@ const ReleaseContainer = styled.div`
   padding: 20px;
   max-width: 1000px;
   margin: 0 auto;
+  
+  @media (max-width: 768px) {
+    padding: 15px;
+    max-width: 100%;
+  }
+  
+  @media (max-width: 480px) {
+    padding: 10px;
+  }
 `;
 
 const PageHeader = styled.div`
@@ -33,6 +42,28 @@ const PageHeader = styled.div`
   p {
     color: #7f8c8d;
     font-size: 16px;
+  }
+  
+  @media (max-width: 768px) {
+    margin-bottom: 20px;
+    
+    h1 {
+      font-size: 24px;
+    }
+    
+    p {
+      font-size: 14px;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    h1 {
+      font-size: 20px;
+    }
+    
+    p {
+      font-size: 13px;
+    }
   }
 `;
 
@@ -53,6 +84,16 @@ const PrinterInterface = styled.div`
     right: 0;
     height: 4px;
     background: linear-gradient(90deg, #3498db, #2ecc71, #f39c12, #e74c3c);
+  }
+  
+  @media (max-width: 768px) {
+    padding: 30px 20px;
+    border-radius: 15px;
+  }
+  
+  @media (max-width: 480px) {
+    padding: 25px 15px;
+    border-radius: 12px;
   }
 `;
 
@@ -88,6 +129,34 @@ const PrinterHeader = styled.div`
     50% { opacity: 0.5; }
     100% { opacity: 1; }
   }
+  
+  @media (max-width: 768px) {
+    margin-bottom: 20px;
+    
+    .printer-name {
+      font-size: 20px;
+    }
+    
+    .printer-status {
+      font-size: 13px;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    .printer-name {
+      font-size: 18px;
+    }
+    
+    .printer-status {
+      font-size: 12px;
+      gap: 6px;
+    }
+    
+    .status-dot {
+      width: 6px;
+      height: 6px;
+    }
+  }
 `;
 
 const AuthSection = styled.div`
@@ -98,6 +167,12 @@ const AuthSection = styled.div`
   
   @media (max-width: 768px) {
     grid-template-columns: 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  
+  @media (max-width: 480px) {
+    gap: 15px;
   }
 `;
 
@@ -137,6 +212,40 @@ const AuthMethod = styled.div`
     opacity: 0.8;
     line-height: 1.4;
   }
+  
+  @media (max-width: 768px) {
+    padding: 20px;
+    
+    .auth-icon {
+      font-size: 40px;
+      margin-bottom: 12px;
+    }
+    
+    .auth-title {
+      font-size: 16px;
+      margin-bottom: 6px;
+    }
+    
+    .auth-description {
+      font-size: 13px;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    padding: 16px;
+    
+    .auth-icon {
+      font-size: 36px;
+    }
+    
+    .auth-title {
+      font-size: 15px;
+    }
+    
+    .auth-description {
+      font-size: 12px;
+    }
+  }
 `;
 
 const PinInput = styled.div`
@@ -165,6 +274,29 @@ const PinInput = styled.div`
     
     &::placeholder {
       color: rgba(255, 255, 255, 0.5);
+    }
+  }
+  
+  @media (max-width: 768px) {
+    gap: 10px;
+    margin: 15px 0;
+    
+    input {
+      width: 50px;
+      height: 50px;
+      font-size: 20px;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    gap: 8px;
+    margin: 12px 0;
+    
+    input {
+      width: 45px;
+      height: 45px;
+      font-size: 18px;
+      border-radius: 10px;
     }
   }
 `;
@@ -897,52 +1029,143 @@ const PrintRelease = () => {
   };
 
   const handleViewDocument = async (job) => {
-    // Use cached document first, fallback to job document
-    let documentData = cachedDocument || job?.document;
-    
-    // If no document data, fetch it (no view count restrictions)
-    if (!documentData?.dataUrl) {
-      try {
-        setLoading(true);
-        const fetchedData = await viewPrintJob(job.id, job.secureToken, authenticatedUser?.id || 'anonymous');
-        if (fetchedData?.dataUrl) {
-          documentData = fetchedData;
-          // Cache it for future use
-          setCachedDocument(fetchedData);
-        }
-      } catch (error) {
-        console.error('Failed to fetch document for viewing:', error);
-        toast.error('Failed to load document: ' + error.message);
-        setLoading(false);
-        return;
-      } finally {
-        setLoading(false);
-      }
-    }
-    
-    if (!documentData?.dataUrl) {
-      toast.error('Document content not available for preview');
+    // Security: Check if within time limit
+    if (!isJobWithinTimeLimit(job)) {
+      toast.info('Print link has expired');
       return;
     }
+    
+    setLoading(true);
+    
+    try {
+      // Use cached document first, fallback to job document
+      let documentData = cachedDocument || job?.document;
+      
+      // If no document data, fetch it (no view count restrictions)
+      if (!documentData?.dataUrl) {
+        try {
+          const fetchedData = await viewPrintJob(job.id, job.secureToken, authenticatedUser?.id || 'anonymous');
+          if (fetchedData?.dataUrl) {
+            documentData = fetchedData;
+            // Cache it for future use
+            setCachedDocument(fetchedData);
+          }
+        } catch (error) {
+          console.error('Failed to fetch document for viewing:', error);
+          toast.error('Failed to load document: ' + error.message);
+          return;
+        }
+      }
+      
+      // Check if we have document content AFTER fetching
+      if (!documentData?.dataUrl) {
+        toast.error('Document content not available for preview');
+        return;
+      }
 
-    const { dataUrl, mimeType, name } = documentData;
-    const isPdf = (mimeType || '').includes('pdf');
-    const isImage = (mimeType || '').startsWith('image/');
-    const isText = (mimeType || '').includes('text/');
-    const isWord = /msword|wordprocessingml/.test(mimeType || '');
-    const isExcel = /excel|spreadsheetml/.test(mimeType || '');
-    const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
-    const isOffice = isWord || isExcel || isPowerPoint;
+      const { dataUrl, mimeType, name } = documentData;
+      const isPdf = (mimeType || '').includes('pdf');
+      const isImage = (mimeType || '').startsWith('image/');
+      const isText = (mimeType || '').includes('text/');
+      const isWord = /msword|wordprocessingml/.test(mimeType || '');
+      const isExcel = /excel|spreadsheetml/.test(mimeType || '');
+      const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
+      const isOffice = isWord || isExcel || isPowerPoint;
 
-    // For PDFs and images, open in a new window for viewing/printing
-    if (isPdf || isImage) {
-      if (isPdf) {
-        // Convert to blob URL for PDFs (avoids data URL size limits)
+      // For PDFs and images, open in a new window for viewing/printing
+      if (isPdf || isImage) {
+        if (isPdf) {
+          // Convert to blob URL for PDFs (avoids data URL size limits)
+          const blobUrl = convertDataUrlToBlob(dataUrl);
+          const printWindow = window.open(blobUrl, '_blank');
+          
+          if (!printWindow) {
+            toast.error('Failed to open document window. Please check popup blocker.');
+            return;
+          }
+          
+          // Cleanup blob URL after window loads
+          if (blobUrl !== dataUrl && printWindow) {
+            printWindow.addEventListener('load', () => {
+              setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+            });
+          }
+        } else if (isImage) {
+          const printWindow = window.open('', '_blank');
+          if (!printWindow) {
+            toast.error('Failed to open document window. Please check popup blocker.');
+            return;
+          }
+          
+          printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <title>${name || 'Document'}</title>
+                <style>
+                  body { margin: 0; padding: 20px; text-align: center; background: #f5f5f5; }
+                  img { max-width: 100%; height: auto; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+                </style>
+              </head>
+              <body>
+                <img src="${dataUrl}" alt="${name || 'Document'}" />
+                <script>window.onload = function() { window.focus(); }</script>
+              </body>
+            </html>
+          `);
+          printWindow.document.close();
+        }
+      } else if (isText) {
+        // For text files, open in a new window with formatted text
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+          toast.error('Failed to open document window. Please check popup blocker.');
+          return;
+        }
+        
+        try {
+          const base64 = dataUrl.split(',')[1] || '';
+          const textContent = atob(base64);
+          printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <title>${name || 'Document'}</title>
+                <style>
+                  body { margin: 0; padding: 20px; font-family: monospace; background: white; }
+                  pre { white-space: pre-wrap; word-wrap: break-word; }
+                </style>
+              </head>
+              <body>
+                <pre>${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre>
+              </body>
+            </html>
+          `);
+          printWindow.document.close();
+        } catch (err) {
+          window.open(dataUrl, '_blank');
+        }
+      } else if (isOffice) {
+        // For Office documents, open for download/viewing
+        const officeType = isWord ? 'Word' : isExcel ? 'Excel' : 'PowerPoint';
+        toast.info(`Opening ${officeType} document. Use File > Print in your application to print.`);
+        
+        // Create a download link
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = name || 'document';
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        // For other formats, try to open directly
+        // Use blob URL for safety (handles large files)
         const blobUrl = convertDataUrlToBlob(dataUrl);
         const printWindow = window.open(blobUrl, '_blank');
         
         if (!printWindow) {
-          toast.error('Failed to open print window. Please check popup blocker.');
+          toast.error('Failed to open document window. Please check popup blocker.');
           return;
         }
         
@@ -952,76 +1175,9 @@ const PrintRelease = () => {
             setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
           });
         }
-      } else if (isImage) {
-        const printWindow = window.open('', '_blank');
-        printWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>${name || 'Document'}</title>
-              <style>
-                body { margin: 0; padding: 20px; text-align: center; background: #f5f5f5; }
-                img { max-width: 100%; height: auto; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-              </style>
-            </head>
-            <body>
-              <img src="${dataUrl}" alt="${name || 'Document'}" />
-              <script>window.onload = function() { window.focus(); }</script>
-            </body>
-          </html>
-        `);
-        printWindow.document.close();
       }
-    } else if (isText) {
-      // For text files, open in a new window with formatted text
-      try {
-        const base64 = dataUrl.split(',')[1] || '';
-        const textContent = atob(base64);
-        const printWindow = window.open('', '_blank');
-        printWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>${name || 'Document'}</title>
-              <style>
-                body { margin: 0; padding: 20px; font-family: monospace; background: white; }
-                pre { white-space: pre-wrap; word-wrap: break-word; }
-              </style>
-            </head>
-            <body>
-              <pre>${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre>
-            </body>
-          </html>
-        `);
-        printWindow.document.close();
-      } catch (err) {
-        window.open(dataUrl, '_blank');
-      }
-    } else if (isOffice) {
-      // For Office documents, open for download/viewing
-      const officeType = isWord ? 'Word' : isExcel ? 'Excel' : 'PowerPoint';
-      toast.info(`Opening ${officeType} document. Use File > Print in your application to print.`);
-      
-      // Create a download link
-      const link = document.createElement('a');
-      link.href = dataUrl;
-      link.download = name || 'document';
-      link.target = '_blank';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } else {
-      // For other formats, try to open directly
-      // Use blob URL for safety (handles large files)
-      const blobUrl = convertDataUrlToBlob(dataUrl);
-      const printWindow = window.open(blobUrl, '_blank');
-      
-      // Cleanup blob URL after window loads
-      if (blobUrl !== dataUrl && printWindow) {
-        printWindow.addEventListener('load', () => {
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-        });
-      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1054,7 +1210,7 @@ const PrintRelease = () => {
         }
       }
       
-      // Check if we have document content
+      // Check if we have document content AFTER fetching
       if (!documentData?.dataUrl) {
         toast.error('Document content not available for printing');
         return;
@@ -1137,6 +1293,11 @@ const PrintRelease = () => {
         } else {
           // Fallback if iframe document not accessible
           const printWindow = window.open('', '_blank');
+          if (!printWindow) {
+            toast.error('Failed to open print window. Please check popup blocker.');
+            return;
+          }
+          
           printWindow.document.write(`<!DOCTYPE html>
             <html>
               <head>
@@ -1181,6 +1342,11 @@ const PrintRelease = () => {
           } else {
             // Fallback
             const printWindow = window.open('', '_blank');
+            if (!printWindow) {
+              toast.error('Failed to open print window. Please check popup blocker.');
+              return;
+            }
+            
             printWindow.document.write(`<!DOCTYPE html>
               <html>
                 <head>
@@ -1228,9 +1394,6 @@ const PrintRelease = () => {
         }
       }, 15000); // Remove after 15 seconds to ensure print dialog has time to appear
 
-    } catch (error) {
-      console.error('Print operation failed:', error);
-      toast.error('Failed to print document: ' + error.message);
     } finally {
       setLoading(false);
     }
