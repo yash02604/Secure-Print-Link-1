@@ -536,22 +536,49 @@ const PrintRelease = () => {
       try {
         const { api } = await import('../api/client');
         const response = await api.get(`/api/jobs/${jobId}?token=${token}`);
-        if (response.data.job) {
+        
+        // Handle success response with document availability check
+        if (response.data.job && response.data.documentAvailable) {
           setServerJob(response.data.job);
           setLinkTargetJobId(jobId);
           // Cache document in browser memory for multi-use
           if (response.data.job.document) {
             setCachedDocument(response.data.job.document);
           }
+        } 
+        // Handle explicit document not found error
+        else if (response.data.errorCode === 'DOCUMENT_NOT_FOUND') {
+          toast.error('Document content not available for this print job', { autoClose: 5000 });
+          return;
+        }
+        // Handle other errors
+        else if (response.data.errorCode) {
+          const errorMsg = response.data.error || 'Unknown error';
+          if (errorMsg.includes('expired')) {
+            toast.info('This print link has expired', { autoClose: 5000 });
+          } else {
+            toast.error(errorMsg);
+          }
+          return;
         }
       } catch (apiError) {
-        // Check if this is an expiration error (expected behavior)
+        // Handle network/API errors
         if (apiError.response?.status === 403) {
           const errorMsg = apiError.response.data?.error || '';
           if (errorMsg.includes('expired')) {
             toast.info('This print link has expired', { autoClose: 5000 });
           } else {
             toast.error(errorMsg || 'Invalid or expired print link');
+          }
+          return;
+        }
+        
+        if (apiError.response?.status === 404) {
+          const errorCode = apiError.response.data?.errorCode;
+          if (errorCode === 'DOCUMENT_NOT_FOUND') {
+            toast.error('Document content not available for this print job', { autoClose: 5000 });
+          } else {
+            toast.error('Print job not found');
           }
           return;
         }
@@ -570,10 +597,16 @@ const PrintRelease = () => {
           }
         }
         
+        // Fallback to client-side job lookup
         const job = printJobs.find(j => j.id === jobId && j.secureToken === token);
         if (job) {
           if (job.expiresAt && new Date(job.expiresAt) < new Date()) {
             toast.info('This print link has expired', { autoClose: 5000 });
+            return;
+          }
+          // Check if job has document data
+          if (!job.document?.dataUrl) {
+            toast.error('Document content not available for this print job', { autoClose: 5000 });
             return;
           }
           setLinkTargetJobId(jobId);
@@ -581,6 +614,8 @@ const PrintRelease = () => {
           if (job.document) {
             setCachedDocument(job.document);
           }
+        } else {
+          toast.error('Print job not found');
         }
       }
     };
@@ -739,12 +774,7 @@ const PrintRelease = () => {
       };
     }
 
-    // If no embedded document is available, fallback to printing the page
-    // const id = setTimeout(() => {
-    //   try { window.print(); } catch (_) {}
-    // }, 300);
-    // return () => clearTimeout(id);
-
+    // If no embedded document is available, show error
     if (!documentData?.dataUrl && !printedViaIframe) {
       console.warn('Document content not found, cannot auto-print.');
       toast.error('Document content not available for printing. Please try downloading it instead.');
@@ -838,13 +868,17 @@ const PrintRelease = () => {
   };
 
   const isJobValidForPrinting = (job) => {
-    // Must be within time limit AND have document data (or be able to fetch it)
-    return isJobWithinTimeLimit(job);
+    // Must be within time limit AND have document data available
+    const hasDocument = job.document?.dataUrl || cachedDocument?.dataUrl;
+    return isJobWithinTimeLimit(job) && hasDocument;
   };
 
   const getPrintButtonTitle = (job) => {
     if (!isJobWithinTimeLimit(job)) {
       return 'Print link has expired';
+    }
+    if (!job.document?.dataUrl && !cachedDocument?.dataUrl) {
+      return 'Document content not available';
     }
     return 'Print Document';
   };
@@ -854,6 +888,9 @@ const PrintRelease = () => {
     if (!selectedPrinter) return 'Select a printer first';
     if (job.viewCount === 0) return 'Must view document first';
     if (!isJobWithinTimeLimit(job)) return 'Print link has expired';
+    if (!job.document?.dataUrl && !cachedDocument?.dataUrl) {
+      return 'Document content not available';
+    }
     return 'Release job to printer';
   };
 
@@ -869,8 +906,8 @@ const PrintRelease = () => {
       console.log(`Attaching cached document to job ${job.id}`);
       return { ...job, document: cachedDocument };
     }
-    // Priority 3: No document available - this is fine, buttons will fetch when clicked
-    console.log(`Job ${job.id} (${job.documentName}) has no document data yet`);
+    // Priority 3: No document available - disable buttons
+    console.log(`Job ${job.id} (${job.documentName}) has no document data`);
     return job;
   });
 
@@ -926,6 +963,13 @@ const PrintRelease = () => {
       return;
     }
 
+    // Check document availability before releasing
+    const hasDocument = job.document?.dataUrl || cachedDocument?.dataUrl;
+    if (!hasDocument) {
+      toast.error('Document content not available. Cannot release print job.');
+      return;
+    }
+
     setLoading(true);
     try {
       const token = new URLSearchParams(location.search).get('token');
@@ -959,12 +1003,22 @@ const PrintRelease = () => {
       const token = new URLSearchParams(location.search).get('token');
       let successCount = 0;
       let errorCount = 0;
+      let documentErrorCount = 0;
       
       for (const job of jobsWithDocuments) {
         // Check security constraints for each job
         if (!isJobWithinTimeLimit(job)) {
           errorCount++;
           console.warn(`Skipping job ${job.id}: Link expired`);
+          continue;
+        }
+        
+        // Check document availability
+        const hasDocument = job.document?.dataUrl || cachedDocument?.dataUrl;
+        if (!hasDocument) {
+          documentErrorCount++;
+          errorCount++;
+          console.warn(`Skipping job ${job.id}: Document not available`);
           continue;
         }
         
@@ -982,9 +1036,20 @@ const PrintRelease = () => {
       }
       
       if (successCount > 0) {
-        toast.success(`Successfully released ${successCount} job(s)! ${errorCount > 0 ? `(${errorCount} skipped due to constraints)` : ''}`);
+        const messages = [`Successfully released ${successCount} job(s)!`];
+        if (errorCount > 0) {
+          messages.push(`${errorCount} skipped due to constraints`);
+          if (documentErrorCount > 0) {
+            messages.push(`${documentErrorCount} had missing documents`);
+          }
+        }
+        toast.success(messages.join(' '));
       } else if (errorCount > 0) {
-        toast.error(`Could not release any jobs. Check that links are not expired.`);
+        if (documentErrorCount === errorCount) {
+          toast.error('Cannot release jobs: Document content not available for any jobs.');
+        } else {
+          toast.error('Could not release any jobs. Check that links are not expired.');
+        }
       }
     } catch (error) {
       const errorMsg = error.message || 'Failed to release some print jobs';
@@ -1049,10 +1114,23 @@ const PrintRelease = () => {
             documentData = fetchedData;
             // Cache it for future use
             setCachedDocument(fetchedData);
+          } else {
+            // Explicit check for document not found
+            toast.error('Document content not available for preview');
+            return;
           }
         } catch (error) {
           console.error('Failed to fetch document for viewing:', error);
-          toast.error('Failed to load document: ' + error.message);
+          const errorMsg = error.message || 'Failed to load document';
+          
+          // Handle specific error cases
+          if (errorMsg.includes('DOCUMENT_NOT_FOUND')) {
+            toast.error('Document content not available for preview');
+          } else if (errorMsg.includes('expired')) {
+            toast.info('This print link has expired', { autoClose: 5000 });
+          } else {
+            toast.error(errorMsg);
+          }
           return;
         }
       }
@@ -1188,6 +1266,13 @@ const PrintRelease = () => {
       return;
     }
     
+    // Check document availability before attempting to print
+    const hasDocument = job.document?.dataUrl || cachedDocument?.dataUrl;
+    if (!hasDocument) {
+      toast.error('Document content not available for printing');
+      return;
+    }
+    
     setLoading(true);
     
     try {
@@ -1202,10 +1287,23 @@ const PrintRelease = () => {
             documentData = fetchedData;
             // Cache it for future use
             setCachedDocument(fetchedData);
+          } else {
+            // Explicit check for document not found
+            toast.error('Document content not available for printing');
+            return;
           }
         } catch (error) {
           console.error('Failed to fetch document for printing:', error);
-          toast.error('Failed to load document: ' + error.message);
+          const errorMsg = error.message || 'Failed to load document';
+          
+          // Handle specific error cases
+          if (errorMsg.includes('DOCUMENT_NOT_FOUND')) {
+            toast.error('Document content not available for printing');
+          } else if (errorMsg.includes('expired')) {
+            toast.info('This print link has expired', { autoClose: 5000 });
+          } else {
+            toast.error(errorMsg);
+          }
           return;
         }
       }

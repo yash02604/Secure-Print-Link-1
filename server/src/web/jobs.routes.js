@@ -192,7 +192,7 @@ router.post('/', (req, res, next) => {
   }
 });
 
-// Get job by id + token (without single-view enforcement)
+// Get job by id + token (with document existence validation)
 router.get('/:id', (req, res) => {
   const db = req.db;
   const { id } = req.params;
@@ -205,7 +205,10 @@ router.get('/:id', (req, res) => {
   if (metadata) {
     // Verify token matches
     if (metadata.token !== token) {
-      return res.status(403).json({ error: 'Invalid token' });
+      return res.status(403).json({ 
+        errorCode: 'INVALID_TOKEN',
+        error: 'Invalid token' 
+      });
     }
     
     // Verify expiration (server time check)
@@ -222,58 +225,115 @@ router.get('/:id', (req, res) => {
           console.error('Error deleting expired file:', err);
         }
       }
-      return res.status(410).json({ error: 'Print link has expired' });
+      return res.status(410).json({ 
+        errorCode: 'LINK_EXPIRED',
+        error: 'Print link has expired' 
+      });
     }
   }
   
   const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
-  if (token && token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
+  if (!job) return res.status(404).json({ 
+    errorCode: 'JOB_NOT_FOUND',
+    error: 'Job not found' 
+  });
+  if (token && token !== job.secureToken) return res.status(403).json({ 
+    errorCode: 'INVALID_TOKEN',
+    error: 'Invalid token' 
+  });
 
   // REMOVED: Single-view enforcement check
   // Job can be viewed multiple times until expiration
   
-  // Fetch document from DB if available
+  // Document existence validation
+  let documentAvailable = false;
+  let documentError = null;
+  
   try {
+    // Check 1: Document in database
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      const base64 = document.content.toString('base64');
-      job.document = {
-        dataUrl: `data:${document.mimeType};base64,${base64}`,
-        mimeType: document.mimeType,
-        name: document.filename,
-        size: document.size
-      };
-      
-      // Fetch analysis
-      const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
-      if (analysis) {
-        job.analysis = JSON.parse(analysis.result);
-      }
-    } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
-      // Fallback to filesystem if not in DB (for older jobs or if DB storage failed)
-      try {
-        const fileBuffer = fs.readFileSync(metadata.filePath);
-        const base64 = fileBuffer.toString('base64');
-        const dataUrl = `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`;
-        
+      // Verify document content exists and is readable
+      if (document.content && document.content.length > 0) {
+        const base64 = document.content.toString('base64');
         job.document = {
-          dataUrl,
-          mimeType: metadata.mimetype,
-          name: metadata.originalname || job.documentName
+          dataUrl: `data:${document.mimeType};base64,${base64}`,
+          mimeType: document.mimeType,
+          name: document.filename,
+          size: document.size
         };
-      } catch (err) {
-        console.error('Error reading file for job:', id, err);
+        documentAvailable = true;
+        
+        // Fetch analysis
+        const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
+        if (analysis) {
+          job.analysis = JSON.parse(analysis.result);
+        }
+      } else {
+        documentError = 'Document content is empty';
+        console.warn(`[Validation] Job ${id} has document record but empty content`);
       }
+    } 
+    // Check 2: Fallback to filesystem (for older jobs or if DB storage failed)
+    else if (metadata?.filePath) {
+      if (fs.existsSync(metadata.filePath)) {
+        try {
+          const fileStats = fs.statSync(metadata.filePath);
+          if (fileStats.size > 0) {
+            const fileBuffer = fs.readFileSync(metadata.filePath);
+            const base64 = fileBuffer.toString('base64');
+            const dataUrl = `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`;
+            
+            job.document = {
+              dataUrl,
+              mimeType: metadata.mimetype,
+              name: metadata.originalname || job.documentName,
+              size: fileStats.size
+            };
+            documentAvailable = true;
+          } else {
+            documentError = 'Document file is empty';
+            console.warn(`[Validation] Job ${id} has file ${metadata.filePath} but it's empty`);
+          }
+        } catch (err) {
+          documentError = 'Failed to read document file';
+          console.error('Error reading file for job:', id, err);
+        }
+      } else {
+        documentError = 'Document file not found';
+        console.warn(`[Validation] Job ${id} references missing file: ${metadata.filePath}`);
+      }
+    } 
+    // Check 3: No document found anywhere
+    else {
+      documentError = 'Document not found in database or filesystem';
+      console.warn(`[Validation] Job ${id} has no document reference`);
     }
   } catch (err) {
+    documentError = 'Database error while fetching document';
     console.error('Error fetching document/analysis from DB:', err);
   }
 
-  res.json({ job });
+  // Return structured response with document availability status
+  const response = {
+    job,
+    documentAvailable,
+    documentError: documentError || (documentAvailable ? null : 'Document not available')
+  };
+
+  // If document is not available, return appropriate error
+  if (!documentAvailable) {
+    return res.status(404).json({
+      errorCode: 'DOCUMENT_NOT_FOUND',
+      error: documentError || 'Document content not available',
+      ...response
+    });
+  }
+
+  res.json(response);
 });
 
-// View job document (multiple views allowed)
+// View job document (multiple views allowed) - with document existence validation
 router.post('/:id/view', (req, res) => {
   const db = req.db;
   const { id } = req.params;
@@ -289,7 +349,10 @@ router.post('/:id/view', (req, res) => {
     if (metadata) {
       // Verify token matches
       if (metadata.token !== token) {
-        return res.status(403).json({ error: 'Invalid token' });
+        return res.status(403).json({ 
+          errorCode: 'INVALID_TOKEN',
+          error: 'Invalid token' 
+        });
       }
       
       // Verify expiration (server time check)
@@ -305,17 +368,93 @@ router.post('/:id/view', (req, res) => {
             console.error('Error deleting expired file:', err);
           }
         }
-        return res.status(410).json({ error: 'Print link has expired' });
+        return res.status(410).json({ 
+          errorCode: 'LINK_EXPIRED', 
+          error: 'Print link has expired' 
+        });
       }
     }
     
     const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
+    if (!job) return res.status(404).json({ 
+      errorCode: 'JOB_NOT_FOUND',
+      error: 'Job not found' 
+    });
+    if (!token || token !== job.secureToken) return res.status(403).json({ 
+      errorCode: 'INVALID_TOKEN',
+      error: 'Invalid token' 
+    });
     
     // REMOVED: Single-view enforcement check
     // Job can be viewed multiple times until expiration
     
+    // Document existence validation
+    let documentData = null;
+    let documentError = null;
+    
+    try {
+      // Check 1: Document in database
+      const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
+      if (document) {
+        // Verify document content exists and is readable
+        if (document.content && document.content.length > 0) {
+          const base64 = document.content.toString('base64');
+          documentData = {
+            dataUrl: `data:${document.mimeType};base64,${base64}`,
+            mimeType: document.mimeType,
+            name: document.filename,
+            size: document.size
+          };
+        } else {
+          documentError = 'Document content is empty';
+          console.warn(`[View] Job ${id} has document record but empty content`);
+        }
+      } 
+      // Check 2: Fallback to filesystem
+      else if (metadata?.filePath) {
+        if (fs.existsSync(metadata.filePath)) {
+          try {
+            const fileStats = fs.statSync(metadata.filePath);
+            if (fileStats.size > 0) {
+              const fileBuffer = fs.readFileSync(metadata.filePath);
+              const base64 = fileBuffer.toString('base64');
+              documentData = {
+                dataUrl: `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`,
+                mimeType: metadata.mimetype,
+                name: metadata.originalname || job.documentName,
+                size: fileStats.size
+              };
+            } else {
+              documentError = 'Document file is empty';
+              console.warn(`[View] Job ${id} has file ${metadata.filePath} but it's empty`);
+            }
+          } catch (err) {
+            documentError = 'Failed to read document file';
+            console.error('[View] Error reading file for job:', id, err);
+          }
+        } else {
+          documentError = 'Document file not found';
+          console.warn(`[View] Job ${id} references missing file: ${metadata.filePath}`);
+        }
+      } 
+      // Check 3: No document found
+      else {
+        documentError = 'Document not found in database or filesystem';
+        console.warn(`[View] Job ${id} has no document reference`);
+      }
+    } catch (err) {
+      documentError = 'Database error while fetching document';
+      console.error('[View] Error fetching document from DB:', err);
+    }
+
+    // If document is not available, return error
+    if (!documentData) {
+      return res.status(404).json({
+        errorCode: 'DOCUMENT_NOT_FOUND',
+        error: documentError || 'Document content not available for preview'
+      });
+    }
+
     // Record the view (but don't prevent future views)
     const now = new Date().toISOString();
     const viewId = nanoid();
@@ -337,27 +476,6 @@ router.post('/:id/view', (req, res) => {
       console.log(`[View] Job ${id} viewed by user ${userId} (multiple views allowed)`);
     }
     
-    // Return document data for preview (NOT download)
-    let documentData = null;
-    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
-    if (document) {
-      const base64 = document.content.toString('base64');
-      documentData = {
-        dataUrl: `data:${document.mimeType};base64,${base64}`,
-        mimeType: document.mimeType,
-        name: document.filename,
-        size: document.size
-      };
-    } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
-      const fileBuffer = fs.readFileSync(metadata.filePath);
-      const base64 = fileBuffer.toString('base64');
-      documentData = {
-        dataUrl: `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`,
-        mimeType: metadata.mimetype,
-        name: metadata.originalname || job.documentName
-      };
-    }
-    
     res.json({ 
       success: true, 
       document: documentData,
@@ -366,7 +484,10 @@ router.post('/:id/view', (req, res) => {
     });
   } catch (err) {
     console.error('Error during job view:', err);
-    res.status(500).json({ error: 'Failed to open document preview' });
+    res.status(500).json({ 
+      errorCode: 'INTERNAL_ERROR',
+      error: 'Failed to open document preview' 
+    });
   } finally {
     activeOperations.delete(id);
   }
