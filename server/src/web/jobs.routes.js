@@ -4,6 +4,7 @@ import multer from 'multer';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { encryptBufferAES, createEncryptionMetadata } from '../utils/aesCrypto.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -26,21 +27,21 @@ let dbInstance = null;
 setInterval(() => {
   const currentServerTime = Date.now();
   const expiredJobIds = [];
-  
+
   expirationMetadata.forEach((metadata, jobId) => {
     // SECURITY: Only clean up if job is not currently being operated on
     if (currentServerTime >= metadata.expiresAt && !activeOperations.has(jobId)) {
       expiredJobIds.push(jobId);
     }
   });
-  
+
   // Clean up expired jobs
   if (expiredJobIds.length > 0) {
     console.log(`[Cleanup] Removing ${expiredJobIds.length} expired print job(s)`);
     expiredJobIds.forEach(jobId => {
       const metadata = expirationMetadata.get(jobId);
       expirationMetadata.delete(jobId);
-      
+
       // Delete file from filesystem
       if (metadata?.filePath) {
         try {
@@ -87,7 +88,7 @@ router.post('/', (req, res, next) => {
   const userId = body.userId;
   const userName = body.userName;
   const documentName = body.documentName || (req.file?.originalname || 'Document');
-  
+
   if (!userId || !documentName) return res.status(400).json({ error: 'Missing required fields' });
 
   const id = nanoid();
@@ -95,12 +96,12 @@ router.post('/', (req, res, next) => {
 
   try {
     const secureToken = nanoid(32);
-    
+
     // Calculate expiration time (server time) - ATOMIC: Done AFTER upload complete
     const expirationDuration = parseInt(body.expirationDuration || 15); // minutes, default 15
     const currentServerTime = Date.now();
     const expiresAt = currentServerTime + (expirationDuration * 60 * 1000); // Convert minutes to milliseconds
-    
+
     const pages = +(body.pages ?? 1);
     const copies = +(body.copies ?? 1);
     const color = body.color === 'true' || body.color === true;
@@ -120,7 +121,7 @@ router.post('/', (req, res, next) => {
       mimetype: req.file?.mimetype,
       originalname: req.file?.originalname
     });
-    
+
     // Prefer explicit public base URL if provided (useful behind tunnels/proxies)
     const host = req.headers['x-forwarded-host'] || req.headers.host;
     const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
@@ -151,47 +152,55 @@ router.post('/', (req, res, next) => {
     // Store document in DB and run analysis
     if (req.file) {
       const documentId = nanoid();
-      const fileContent = fs.readFileSync(req.file.path);
-      
-      // Check if file is encrypted (has .enc extension)
-      const isEncrypted = req.file.originalname.includes('.enc.');
-      
-      let storedContent = fileContent;
-      let encryptionMetadata = null;
-      
-      // If file is encrypted, we need to store the encryption metadata
-      if (isEncrypted) {
-        try {
-          // Extract original filename to generate secret
-          const originalName = req.file.originalname.replace(/\.enc(\.\w+)$/, '$1');
-          const secret = `${id}_${userId}_${Date.now()}`;
-          
-          // For now, store as-is but mark as encrypted
-          // In future, we could decrypt and re-encrypt with server key
-          encryptionMetadata = {
-            secret: secret,
-            // IV and authTag would be extracted from file if we had them
-            // For now we'll generate new ones when decrypting
-          };
-          
-          console.log(`[Encryption] Storing encrypted file ${req.file.originalname} for job ${id}`);
-        } catch (err) {
-          console.error('[Encryption] Failed to process encrypted file:', err);
+
+      try {
+        const fileContent = fs.readFileSync(req.file.path);
+
+        // SERVER-SIDE ENCRYPTION
+        // Generate a consistently unique secret for this job
+        const secret = `${id}_${userId}_${Date.now()}`;
+
+        console.log(`[Encryption] Encrypting file ${req.file.originalname} for job ${id}`);
+
+        // Encrypt the buffer
+        const { encryptedData, iv, authTag } = encryptBufferAES(fileContent, secret);
+
+        // Create metadata for storage
+        const encryptionMetadata = createEncryptionMetadata(secret, iv, authTag);
+
+        // Store encrypted content in DB
+        db.prepare(`INSERT INTO documents (
+          id, jobId, content, mimeType, filename, size, createdAt, encryptionMetadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+          documentId,
+          id,
+          encryptedData,
+          req.file.mimetype,
+          req.file.originalname,
+          req.file.size,
+          new Date().toISOString(),
+          JSON.stringify(encryptionMetadata)
+        );
+
+        // SECURITY: Delete the plain-text file from disk immediately
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+          console.log(`[Security] Deleted plain-text upload: ${req.file.path}`);
         }
+
+        // Update in-memory metadata to reflect file is gone from disk
+        const currentMeta = expirationMetadata.get(id);
+        if (currentMeta) {
+          expirationMetadata.set(id, { ...currentMeta, filePath: null });
+        }
+
+      } catch (err) {
+        console.error('[Encryption] Failed to encrypt/store file:', err);
+        // If DB store failed, we might still have the file on disk. 
+        // We should probably fail the request or handle it.
+        // For now, let the error propagate to the catch block below.
+        throw err;
       }
-      
-      db.prepare(`INSERT INTO documents (
-        id, jobId, content, mimeType, filename, size, createdAt, encryptionMetadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        documentId, 
-        id, 
-        storedContent, 
-        req.file.mimetype, 
-        req.file.originalname, 
-        req.file.size, 
-        new Date().toISOString(),
-        encryptionMetadata ? JSON.stringify(encryptionMetadata) : null
-      );
 
       // Mock Document Analysis
       const analysisId = nanoid();
@@ -201,7 +210,7 @@ router.post('/', (req, res, next) => {
         status: 'completed',
         features: ['text-extraction', 'metadata-analysis']
       };
-      
+
       db.prepare(`INSERT INTO document_analysis (
         id, documentId, analysisType, result, status, createdAt
       ) VALUES (?, ?, ?, ?, ?, ?)`).run(
@@ -211,11 +220,11 @@ router.post('/', (req, res, next) => {
 
     res.json({
       success: true,
-      job: { 
-        id, userId, documentName, pages, copies, color, duplex, stapling, priority, notes, 
-        status: 'pending', cost, submittedAt: new Date().toISOString(), 
+      job: {
+        id, userId, documentName, pages, copies, color, duplex, stapling, priority, notes,
+        status: 'pending', cost, submittedAt: new Date().toISOString(),
         secureToken, releaseLink, expiresAt: new Date(expiresAt).toISOString(), expirationDuration,
-        file: req.file ? { filename: req.file.filename, originalname: req.file.originalname, mimetype: req.file.mimetype, size: req.file.size } : null 
+        file: req.file ? { filename: req.file.filename, originalname: req.file.originalname, mimetype: req.file.mimetype, size: req.file.size } : null
       }
     });
   } catch (err) {
@@ -231,20 +240,20 @@ router.get('/:id', async (req, res) => {
   const db = req.db;
   const { id } = req.params;
   const { token } = req.query;
-  
+
   // Validate token and expiration from server memory
   const currentServerTime = Date.now();
   const metadata = expirationMetadata.get(id);
-  
+
   if (metadata) {
     // Verify token matches
     if (metadata.token !== token) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         errorCode: 'INVALID_TOKEN',
-        error: 'Invalid token' 
+        error: 'Invalid token'
       });
     }
-    
+
     // Verify expiration (server time check)
     if (currentServerTime >= metadata.expiresAt) {
       // Expired - clean up
@@ -259,67 +268,44 @@ router.get('/:id', async (req, res) => {
           console.error('Error deleting expired file:', err);
         }
       }
-      return res.status(410).json({ 
+      return res.status(410).json({
         errorCode: 'LINK_EXPIRED',
-        error: 'Print link has expired' 
+        error: 'Print link has expired'
       });
     }
   }
-  
+
   const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-  if (!job) return res.status(404).json({ 
+  if (!job) return res.status(404).json({
     errorCode: 'JOB_NOT_FOUND',
-    error: 'Job not found' 
+    error: 'Job not found'
   });
-  if (token && token !== job.secureToken) return res.status(403).json({ 
+  if (token && token !== job.secureToken) return res.status(403).json({
     errorCode: 'INVALID_TOKEN',
-    error: 'Invalid token' 
+    error: 'Invalid token'
   });
 
   // REMOVED: Single-view enforcement check
   // Job can be viewed multiple times until expiration
-  
+
   // Document existence validation with decryption
   let documentAvailable = false;
   let documentError = null;
-  
+
   try {
     // Check 1: Document in database
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
       // Verify document content exists and is readable
       if (document.content && document.content.length > 0) {
-        let fileBuffer = document.content;
-        let mimeType = document.mimeType;
-        let filename = document.filename;
-        
-        // Check if document is encrypted
-        if (document.encryptionMetadata) {
-          try {
-            const encryptionMeta = JSON.parse(document.encryptionMetadata);
-            const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
-            
-            // Generate the same secret that was used for encryption
-            const secret = encryptionMeta.secret || `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
-            
-            // For demo purposes, send encrypted content as-is but log that decryption would happen
-            console.log(`[GET] Serving encrypted document for job ${id} - will be decrypted by client`);
-            
-          } catch (decryptErr) {
-            documentError = 'Failed to process encrypted document';
-            console.error('[GET] Decryption error:', decryptErr);
-          }
-        }
-        
-        const base64 = fileBuffer.toString('base64');
         job.document = {
-          dataUrl: `data:${mimeType};base64,${base64}`,
+          // dataUrl removed - use /content endpoint
           mimeType: mimeType,
           name: filename,
           size: document.size
         };
         documentAvailable = true;
-        
+
         // Fetch analysis
         const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
         if (analysis) {
@@ -329,41 +315,15 @@ router.get('/:id', async (req, res) => {
         documentError = 'Document content is empty';
         console.warn(`[Validation] Job ${id} has document record but empty content`);
       }
-    } 
+    }
     // Check 2: Fallback to filesystem (for older jobs or if DB storage failed)
     else if (metadata?.filePath) {
       if (fs.existsSync(metadata.filePath)) {
         try {
           const fileStats = fs.statSync(metadata.filePath);
           if (fileStats.size > 0) {
-            const fileBuffer = fs.readFileSync(metadata.filePath);
-            let mimeType = metadata.mimetype || 'application/octet-stream';
-            let filename = metadata.originalname || job.documentName;
-            
-            // Check if file is encrypted
-            if (filename.includes('.enc.')) {
-              try {
-                const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
-                
-                // Generate secret (would need to be stored with file in real implementation)
-                const secret = `${id}_${job.userId}_${new Date().getTime()}`;
-                
-                // For demo purposes, log that decryption would happen
-                console.log(`[GET] Serving encrypted file ${metadata.filePath} - will be decrypted by client`);
-                
-                // Remove .enc extension for proper MIME type
-                filename = filename.replace(/\.enc(\.\w+)$/, '$1');
-              } catch (decryptErr) {
-                documentError = 'Failed to process encrypted file';
-                console.error('[GET] File decryption error:', decryptErr);
-              }
-            }
-            
-            const base64 = fileBuffer.toString('base64');
-            const dataUrl = `data:${mimeType};base64,${base64}`;
-            
             job.document = {
-              dataUrl,
+              // dataUrl removed
               mimeType: mimeType,
               name: filename,
               size: fileStats.size
@@ -381,7 +341,7 @@ router.get('/:id', async (req, res) => {
         documentError = 'Document file not found';
         console.warn(`[Validation] Job ${id} references missing file: ${metadata.filePath}`);
       }
-    } 
+    }
     // Check 3: No document found anywhere
     else {
       documentError = 'Document not found in database or filesystem';
@@ -417,20 +377,20 @@ router.get('/:id/content', async (req, res) => {
   const db = req.db;
   const { id } = req.params;
   const { token } = req.query;
-  
+
   activeOperations.add(id); // Lock job during content fetch
-  
+
   try {
     // Validate token and expiration from server memory
     const currentServerTime = Date.now();
     const metadata = expirationMetadata.get(id);
-    
+
     if (metadata) {
       // Verify token matches
       if (metadata.token !== token) {
         return res.status(403).send('Invalid or expired token');
       }
-      
+
       // Verify expiration (server time check)
       if (currentServerTime >= metadata.expiresAt) {
         // Expired - clean up
@@ -447,16 +407,16 @@ router.get('/:id/content', async (req, res) => {
         return res.status(410).send('Print link has expired');
       }
     }
-    
+
     const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
     if (!job) return res.status(404).send('Job not found');
     if (!token || token !== job.secureToken) return res.status(403).send('Invalid token');
-    
+
     // Fetch and decrypt document
     let fileBuffer = null;
     let mimeType = 'application/octet-stream';
     let filename = job.documentName || 'document';
-    
+
     try {
       // Check 1: Document in database
       const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
@@ -464,18 +424,18 @@ router.get('/:id/content', async (req, res) => {
         fileBuffer = document.content;
         mimeType = document.mimeType || mimeType;
         filename = document.filename || filename;
-        
+
         // Check if document is encrypted
         if (document.encryptionMetadata) {
           try {
             const encryptionMeta = JSON.parse(document.encryptionMetadata);
             const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
-            
+
             // Decrypt the file content
             const secret = encryptionMeta.secret || `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
             const iv = encryptionMeta.iv || [];
             const authTag = encryptionMeta.authTag || [];
-            
+
             if (iv.length > 0 && authTag.length > 0) {
               const decryptedBuffer = decryptFileForViewing(fileBuffer, iv, authTag, secret);
               fileBuffer = decryptedBuffer;
@@ -488,7 +448,7 @@ router.get('/:id/content', async (req, res) => {
             return res.status(500).send('Unable to process document. Please contact administrator.');
           }
         }
-      } 
+      }
       // Check 2: Fallback to filesystem
       else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
         const fileStats = fs.statSync(metadata.filePath);
@@ -496,17 +456,17 @@ router.get('/:id/content', async (req, res) => {
           fileBuffer = fs.readFileSync(metadata.filePath);
           mimeType = metadata.mimetype || mimeType;
           filename = metadata.originalname || filename;
-          
+
           // Check if file is encrypted by extension
           if (filename.includes('.enc.')) {
             try {
               const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
               const secret = `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
-              
+
               // For filesystem files, we'd need stored IV/authTag
               // This is a limitation - filesystem storage should include metadata file
               console.warn(`[Content] Encrypted file ${filename} from filesystem - metadata may be incomplete`);
-              
+
               // Remove .enc extension for proper MIME type
               filename = filename.replace(/\.enc(\.\w+)$/, '$1');
             } catch (decryptErr) {
@@ -516,22 +476,22 @@ router.get('/:id/content', async (req, res) => {
           }
         }
       }
-      
+
       // Validate we have content
       if (!fileBuffer || fileBuffer.length === 0) {
         console.warn(`[Content] No document content found for job ${id}`);
         return res.status(404).send('Document content not available');
       }
-      
+
       // Set proper headers for browser viewing
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
       res.setHeader('Content-Length', fileBuffer.length);
-      
+
       // Stream the decrypted content
       res.send(fileBuffer);
       console.log(`[Content] Served ${mimeType} document for job ${id} (${fileBuffer.length} bytes)`);
-      
+
     } catch (err) {
       console.error('[Content] Error fetching document:', err);
       return res.status(500).send('Unable to process document. Please contact administrator.');
@@ -549,23 +509,23 @@ router.post('/:id/view', async (req, res) => {
   const db = req.db;
   const { id } = req.params;
   const { token, userId } = req.body || {};
-  
+
   activeOperations.add(id); // Lock job during view confirmation
-  
+
   try {
     // Validate token and expiration from server memory
     const currentServerTime = Date.now();
     const metadata = expirationMetadata.get(id);
-    
+
     if (metadata) {
       // Verify token matches
       if (metadata.token !== token) {
-        return res.status(403).json({ 
+        return res.status(403).json({
           errorCode: 'INVALID_TOKEN',
-          error: 'Invalid token' 
+          error: 'Invalid token'
         });
       }
-      
+
       // Verify expiration (server time check)
       if (currentServerTime >= metadata.expiresAt) {
         // Expired - clean up
@@ -579,77 +539,38 @@ router.post('/:id/view', async (req, res) => {
             console.error('Error deleting expired file:', err);
           }
         }
-        return res.status(410).json({ 
-          errorCode: 'LINK_EXPIRED', 
-          error: 'Print link has expired' 
+        return res.status(410).json({
+          errorCode: 'LINK_EXPIRED',
+          error: 'Print link has expired'
         });
       }
     }
-    
+
     const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) return res.status(404).json({ 
+    if (!job) return res.status(404).json({
       errorCode: 'JOB_NOT_FOUND',
-      error: 'Job not found' 
+      error: 'Job not found'
     });
-    if (!token || token !== job.secureToken) return res.status(403).json({ 
+    if (!token || token !== job.secureToken) return res.status(403).json({
       errorCode: 'INVALID_TOKEN',
-      error: 'Invalid token' 
+      error: 'Invalid token'
     });
-    
+
     // REMOVED: Single-view enforcement check
     // Job can be viewed multiple times until expiration
-    
+
     // Document existence validation with decryption
     let documentData = null;
     let documentError = null;
-    
+
     try {
       // Check 1: Document in database
       const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
       if (document) {
         // Verify document content exists and is readable
         if (document.content && document.content.length > 0) {
-          let fileBuffer = document.content;
-          let mimeType = document.mimeType;
-          let filename = document.filename;
-          
-          // Check if document is encrypted
-          if (document.encryptionMetadata) {
-            try {
-              const encryptionMeta = JSON.parse(document.encryptionMetadata);
-              const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
-              
-              // For now, we'll assume the file is stored encrypted and needs decryption
-              // In a real implementation, we'd have the IV and authTag stored with the document
-              // This is a simplified approach - in production you'd store IV/authTag properly
-              
-              // Generate the same secret that was used for encryption
-              const secret = encryptionMeta.secret || `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
-              
-              // Decrypt the file content (this would need proper IV/authTag in real implementation)
-              // For demo purposes, we'll send the encrypted content as-is but with proper headers
-              // In a real system, you'd decrypt here:
-              /*
-              const decryptedBuffer = decryptFileForViewing(
-                document.content,
-                encryptionMeta.iv || [], // Would be stored IV
-                encryptionMeta.authTag || [], // Would be stored auth tag
-                secret
-              );
-              fileBuffer = decryptedBuffer;
-              */
-              
-              console.log(`[View] Serving encrypted document for job ${id} - will be decrypted by client`);
-            } catch (decryptErr) {
-              documentError = 'Failed to decrypt document';
-              console.error('[View] Decryption error:', decryptErr);
-            }
-          }
-          
-          // Convert to base64 data URL
-          const base64 = fileBuffer.toString('base64');
           documentData = {
-            dataUrl: `data:${mimeType};base64,${base64}`,
+            // dataUrl removed
             mimeType: mimeType,
             name: filename,
             size: document.size
@@ -658,48 +579,15 @@ router.post('/:id/view', async (req, res) => {
           documentError = 'Document content is empty';
           console.warn(`[View] Job ${id} has document record but empty content`);
         }
-      } 
+      }
       // Check 2: Fallback to filesystem
       else if (metadata?.filePath) {
         if (fs.existsSync(metadata.filePath)) {
           try {
             const fileStats = fs.statSync(metadata.filePath);
             if (fileStats.size > 0) {
-              const fileBuffer = fs.readFileSync(metadata.filePath);
-              let mimeType = metadata.mimetype || 'application/octet-stream';
-              let filename = metadata.originalname || job.documentName;
-              
-              // Check if file is encrypted
-              if (filename.includes('.enc.')) {
-                try {
-                  const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
-                  
-                  // Generate secret (would need to be stored with file in real implementation)
-                  const secret = `${id}_${job.userId}_${new Date().getTime()}`;
-                  
-                  // Decrypt file content (simplified - would need proper IV/authTag)
-                  /*
-                  const decryptedBuffer = decryptFileForViewing(
-                    fileBuffer,
-                    [], // Would be stored IV
-                    [], // Would be stored auth tag
-                    secret
-                  );
-                  fileBuffer = decryptedBuffer;
-                  */
-                  
-                  // Remove .enc extension for proper MIME type
-                  filename = filename.replace(/\.enc(\.\w+)$/, '$1');
-                  console.log(`[View] Serving encrypted file ${metadata.filePath} - will be decrypted by client`);
-                } catch (decryptErr) {
-                  documentError = 'Failed to decrypt file';
-                  console.error('[View] File decryption error:', decryptErr);
-                }
-              }
-              
-              const base64 = fileBuffer.toString('base64');
               documentData = {
-                dataUrl: `data:${mimeType};base64,${base64}`,
+                // dataUrl removed
                 mimeType: mimeType,
                 name: filename,
                 size: fileStats.size
@@ -716,7 +604,7 @@ router.post('/:id/view', async (req, res) => {
           documentError = 'Document file not found';
           console.warn(`[View] Job ${id} references missing file: ${metadata.filePath}`);
         }
-      } 
+      }
       // Check 3: No document found
       else {
         documentError = 'Document not found in database or filesystem';
@@ -738,35 +626,35 @@ router.post('/:id/view', async (req, res) => {
     // Record the view (but don't prevent future views)
     const now = new Date().toISOString();
     const viewId = nanoid();
-    
+
     // Log the view for audit trail (don't increment viewCount to allow multiple views)
     db.prepare(`INSERT INTO job_views (id, jobId, userId, viewedAt, userAgent, ipAddress) 
       VALUES (?, ?, ?, ?, ?, ?)`)
       .run(
-        viewId, 
-        id, 
-        userId || 'anonymous', 
-        now, 
-        req.headers['user-agent'] || '', 
+        viewId,
+        id,
+        userId || 'anonymous',
+        now,
+        req.headers['user-agent'] || '',
         req.ip || req.connection.remoteAddress || ''
       );
-    
+
     // Update in-memory metadata (don't change viewCount)
     if (metadata) {
       console.log(`[View] Job ${id} viewed by user ${userId} (multiple views allowed)`);
     }
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       document: documentData,
       viewCount: job.viewCount, // Return original view count
       message: 'Document preview opened. Multiple views allowed until expiration.'
     });
   } catch (err) {
     console.error('Error during job view:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       errorCode: 'INTERNAL_ERROR',
-      error: 'Failed to open document preview' 
+      error: 'Failed to open document preview'
     });
   } finally {
     activeOperations.delete(id);
@@ -778,20 +666,20 @@ router.post('/:id/release', (req, res) => {
   const db = req.db;
   const { id } = req.params;
   const { token, printerId, releasedBy } = req.body || {};
-  
+
   activeOperations.add(id); // Lock job during release operation
-  
+
   try {
     // Validate token and expiration from server memory
     const currentServerTime = Date.now();
     const metadata = expirationMetadata.get(id);
-    
+
     if (metadata) {
       // Verify token matches
       if (metadata.token !== token) {
         return res.status(403).json({ error: 'Invalid token' });
       }
-      
+
       // Verify expiration (server time check)
       if (currentServerTime >= metadata.expiresAt) {
         // Expired - clean up
@@ -808,16 +696,16 @@ router.post('/:id/release', (req, res) => {
         return res.status(410).json({ error: 'Print link has expired' });
       }
     }
-    
+
     const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
-    
+
     // REJECTION: Already released jobs
     if (job.status === 'released') {
       return res.status(409).json({ error: 'Print job has already been released' });
     }
-    
+
     // Check if job has expired
     if (job.status === 'pending' && job.viewCount > 0) {
       // Job has been viewed - check expiration
@@ -848,8 +736,8 @@ router.post('/:id/release', (req, res) => {
       });
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Print job released successfully!',
       status: 'released'
     });
@@ -865,20 +753,20 @@ router.post('/:id/release', (req, res) => {
 router.post('/:id/complete', (req, res) => {
   const db = req.db;
   const { id } = req.params;
-  
+
   const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
   if (!job) return res.status(404).json({ error: 'Job not found' });
-  
+
   // Can only complete released jobs
   if (job.status !== 'released') {
     return res.status(400).json({ error: 'Job must be released before marking as completed' });
   }
-  
+
   db.prepare('UPDATE jobs SET status = ?, completedAt = ? WHERE id = ?')
     .run('completed', new Date().toISOString(), id);
 
   console.log(`[Complete] Job ${id} marked as completed`);
-  
+
   res.json({ success: true, message: 'Job marked as completed' });
 });
 
@@ -886,17 +774,17 @@ router.post('/:id/complete', (req, res) => {
 router.get('/', (req, res) => {
   const db = req.db;
   const { userId } = req.query;
-  
+
   let query = 'SELECT * FROM jobs';
   let params = [];
-  
+
   if (userId) {
     query += ' WHERE userId = ?';
     params.push(userId);
   }
-  
+
   query += ' ORDER BY submittedAt DESC';
-  
+
   const jobs = db.prepare(query).all(params);
   res.json({ jobs });
 });
@@ -905,17 +793,17 @@ router.get('/', (req, res) => {
 router.get('/cleanup/expired', (req, res) => {
   const currentServerTime = Date.now();
   const expired = [];
-  
+
   expirationMetadata.forEach((metadata, jobId) => {
     if (currentServerTime >= metadata.expiresAt) {
       expired.push({
         id: jobId,
         expiredAt: metadata.expiresAt,
-        originalToken: metadata.token.substring(0, 8) + '...' 
+        originalToken: metadata.token.substring(0, 8) + '...'
       });
     }
   });
-  
+
   res.json({ expired });
 });
 

@@ -5,18 +5,17 @@ import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 import { usePrintJob } from '../context/PrintJobContext';
 import { QRCodeCanvas } from 'qrcode.react';
-import { encryptFileAES, createEncryptedFile } from '../utils/aesCrypto';
-import { 
-  FaUpload, 
-  FaFileAlt, 
+import {
+  FaUpload,
+  FaFileAlt,
   FaFilePdf,
   FaFileWord,
   FaFileExcel,
   FaFilePowerpoint,
   FaFileImage,
   FaFileCode,
-  FaPrint, 
-  FaShieldAlt, 
+  FaPrint,
+  FaShieldAlt,
   FaCog,
   FaTimes,
   FaCheck,
@@ -550,7 +549,6 @@ const PrintJobSubmission = () => {
   const { submitPrintJob, isSubmitting, error: apiError, setError: setApiError } = usePrintJob();
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedFile, setSelectedFile] = useState(null);
-  const [encryptedFile, setEncryptedFile] = useState(null); // Store encrypted file for submission
   const [lastSubmittedJob, setLastSubmittedJob] = useState(null);
   const [jobData, setJobData] = useState({
     documentName: '',
@@ -601,7 +599,7 @@ const PrintJobSubmission = () => {
     if (fileRejections && fileRejections.length > 0) {
       const rejection = fileRejections[0];
       const file = rejection.file;
-      
+
       // Validate by file extension (more reliable than MIME type)
       if (isValidFileType(file.name)) {
         // File extension is valid, accept it even if MIME type was rejected
@@ -619,11 +617,11 @@ const PrintJobSubmission = () => {
         return;
       }
     }
-    
+
     // Handle accepted files (passed MIME type check)
     if (acceptedFiles && acceptedFiles.length > 0) {
       const file = acceptedFiles[0];
-      
+
       // Double-check by extension (safety check)
       if (isValidFileType(file.name)) {
         setSelectedFile(file);
@@ -696,18 +694,17 @@ const PrintJobSubmission = () => {
       if (jobData.pages < 1) errors.pages = 'Pages must be at least 1';
       if (jobData.copies < 1) errors.copies = 'Copies must be at least 1';
       if (jobData.expirationDuration < 5) errors.expiration = 'Expiration must be at least 5 minutes';
-      
+
       setValidationErrors(errors);
       return Object.keys(errors).length === 0;
     };
 
     const handleSubmit = async (e) => {
       e.preventDefault();
-      
+
       if (currentStep === 3) {
         // Reset for another job
         setSelectedFile(null);
-        setEncryptedFile(null);
         setLastSubmittedJob(null);
         setJobData({
           documentName: '',
@@ -731,56 +728,17 @@ const PrintJobSubmission = () => {
       }
 
       try {
-        // Encrypt file before submission
-        let fileToSubmit = selectedFile;
-        
-        if (selectedFile) {
-          try {
-            // Generate secret from jobId + timestamp + userId for deterministic encryption
-            const jobId = 'job_' + Date.now().toString(36);
-            const secret = `${jobId}_${currentUser.id}_${Date.now()}`;
-            
-            // Encrypt the file
-            const { encryptedBlob, iv } = await encryptFileAES(selectedFile, secret);
-            
-            // Create encrypted file with .enc extension
-            const encryptedFileObj = createEncryptedFile(selectedFile, encryptedBlob);
-            
-            // Store encrypted file and IV for later use
-            setEncryptedFile({
-              file: encryptedFileObj,
-              iv: Array.from(iv), // Convert to array for JSON serialization
-              secret: secret
-            });
-            
-            fileToSubmit = encryptedFileObj;
-            
-            toast.info('File encrypted successfully');
-          } catch (encryptError) {
-            console.error('Encryption failed:', encryptError);
-            toast.warn('Encryption failed, submitting original file');
-            // Continue with original file if encryption fails
-          }
-        }
-
         const jobPayload = {
           ...jobData,
           userId: currentUser.id,
           userName: currentUser.name,
-          file: fileToSubmit
+          file: selectedFile
         };
 
         const result = await submitPrintJob(jobPayload);
-        
-        // Attach encryption metadata to the job for later decryption
-        if (result && encryptedFile) {
-          result.encryption = {
-            iv: encryptedFile.iv,
-            secret: encryptedFile.secret
-          };
-        }
-        
+
         setLastSubmittedJob(result);
+        toast.success('Document encrypted and submitted successfully!');
         setCurrentStep(3);
       } catch (err) {
         setFormError(err.message || 'Submission failed. Please try again.');
@@ -789,7 +747,6 @@ const PrintJobSubmission = () => {
 
     const removeFile = () => {
       setSelectedFile(null);
-      setEncryptedFile(null);
       setJobData(prev => ({ ...prev, documentName: '' }));
       setCurrentStep(1);
     };
@@ -806,7 +763,7 @@ const PrintJobSubmission = () => {
       if (!file) return FaFileAlt;
       const fileName = file.name.toLowerCase();
       const fileType = file.type.toLowerCase();
-      
+
       // PDF
       if (fileType.includes('pdf') || fileName.endsWith('.pdf')) {
         return FaFilePdf;
@@ -867,13 +824,13 @@ const PrintJobSubmission = () => {
 
           <form onSubmit={handleSubmit}>
             {currentStep === 1 && (
-              <FileUploadSection 
-                {...getRootProps()} 
+              <FileUploadSection
+                {...getRootProps()}
                 className={`${isDragActive ? 'drag-active' : ''} ${isSubmitting ? 'loading' : ''}`}
                 style={{ cursor: isSubmitting ? 'not-allowed' : 'pointer' }}
               >
-                <input 
-                  {...getInputProps()} 
+                <input
+                  {...getInputProps()}
                   accept={supportedExtensions.join(',')}
                   type="file"
                   disabled={isSubmitting}
@@ -883,7 +840,7 @@ const PrintJobSubmission = () => {
                   {isDragActive ? 'Drop the file here' : 'Drag & drop a file here'}
                 </div>
                 <div className="upload-hint">
-                  or click to select a file<br/>
+                  or click to select a file<br />
                   <strong>Supported formats:</strong> PDF, Word, Excel, PowerPoint, Text, Images, RTF, JSON, HTML
                 </div>
                 {validationErrors.file && (
@@ -893,7 +850,7 @@ const PrintJobSubmission = () => {
                 )}
                 {fileRejections && fileRejections.length > 0 && (
                   <div style={{ color: 'var(--error-color)', marginTop: '10px', fontSize: '14px' }}>
-                    {fileRejections[0].errors[0]?.code === 'file-invalid-type' 
+                    {fileRejections[0].errors[0]?.code === 'file-invalid-type'
                       ? 'Please select a supported file type'
                       : fileRejections[0].errors[0]?.message}
                   </div>
@@ -1075,9 +1032,9 @@ const PrintJobSubmission = () => {
                     <QRCodeSection>
                       <div className="qr-title">Scan this QR code at any printer to release your job</div>
                       <div className="qr-code">
-                        <QRCodeCanvas 
-                          value={lastSubmittedJob?.releaseLink || `${window.location.origin}/release/${Date.now()}`} 
-                          size={150} 
+                        <QRCodeCanvas
+                          value={lastSubmittedJob?.releaseLink || `${window.location.origin}/release/${Date.now()}`}
+                          size={150}
                         />
                       </div>
                     </QRCodeSection>
@@ -1113,8 +1070,8 @@ const PrintJobSubmission = () => {
                   <LinkBox>{lastSubmittedJob.releaseLink}</LinkBox>
                   <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
                     <CopyButton type="button" onClick={copyLink}>Copy Link</CopyButton>
-                    <CopyButton 
-                      type="button" 
+                    <CopyButton
+                      type="button"
                       onClick={() => window.open(lastSubmittedJob.releaseLink, '_blank')}
                       style={{ background: '#2ecc71' }}
                       onMouseOver={(e) => e.target.style.background = '#27ae60'}
@@ -1127,21 +1084,21 @@ const PrintJobSubmission = () => {
                 <div style={{ marginTop: 12, color: '#7f8c8d', fontSize: '14px' }}>
                   <strong>📄 Document Formats Supported:</strong> PDF, Word (DOC, DOCX), Excel (XLS, XLSX), PowerPoint (PPT, PPTX), Text, Images, and more.
                   <br /><br />
-                  <strong>⏰ Link Expiration:</strong> This link will expire in {lastSubmittedJob.expirationDuration || 15} minutes ({new Date(lastSubmittedJob.expiresAt).toLocaleString()}). 
+                  <strong>⏰ Link Expiration:</strong> This link will expire in {lastSubmittedJob.expirationDuration || 15} minutes ({new Date(lastSubmittedJob.expiresAt).toLocaleString()}).
                   The file will be automatically deleted after expiration or successful printing.
                   <br /><br />
-                  Share this link with the person at the printer to release the job. The link encodes a secure token unique to this job. 
+                  Share this link with the person at the printer to release the job. The link encodes a secure token unique to this job.
                   Click "Open Print Link" to view and print your document directly.
                 </div>
               </>
             )}
 
             {(formError || apiError) && (
-              <div style={{ 
-                padding: '12px', 
-                background: '#fef2f2', 
-                color: 'var(--error-color)', 
-                borderRadius: '8px', 
+              <div style={{
+                padding: '12px',
+                background: '#fef2f2',
+                color: 'var(--error-color)',
+                borderRadius: '8px',
                 marginBottom: '20px',
                 fontSize: '14px',
                 border: '1px solid #fee2e2',
@@ -1154,8 +1111,8 @@ const PrintJobSubmission = () => {
               </div>
             )}
 
-            <SubmitButton 
-              type="submit" 
+            <SubmitButton
+              type="submit"
               disabled={isSubmitting || (currentStep === 1 && !selectedFile)}
               className={isSubmitting ? 'loading' : ''}
             >
