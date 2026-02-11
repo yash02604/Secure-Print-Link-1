@@ -275,100 +275,104 @@ router.get('/:id', async (req, res) => {
     }
   }
 
-  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-  if (!job) return res.status(404).json({
-    errorCode: 'JOB_NOT_FOUND',
-    error: 'Job not found'
-  });
-  if (token && token !== job.secureToken) return res.status(403).json({
-    errorCode: 'INVALID_TOKEN',
-    error: 'Invalid token'
-  });
-
-  // REMOVED: Single-view enforcement check
-  // Job can be viewed multiple times until expiration
-
-  // Document existence validation with decryption
-  let documentAvailable = false;
-  let documentError = null;
-
   try {
-    // Check 1: Document in database
-    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
-    if (document) {
-      // Verify document content exists and is readable
-      if (document.content && document.content.length > 0) {
-        job.document = {
-          // dataUrl removed - use /content endpoint
-          mimeType: mimeType,
-          name: filename,
-          size: document.size
-        };
-        documentAvailable = true;
+    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+    if (!job) return res.status(404).json({
+      errorCode: 'JOB_NOT_FOUND',
+      error: 'Job not found'
+    });
+    if (token && token !== job.secureToken) return res.status(403).json({
+      errorCode: 'INVALID_TOKEN',
+      error: 'Invalid token'
+    });
 
-        // Fetch analysis
-        const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
-        if (analysis) {
-          job.analysis = JSON.parse(analysis.result);
-        }
-      } else {
-        documentError = 'Document content is empty';
-        console.warn(`[Validation] Job ${id} has document record but empty content`);
-      }
-    }
-    // Check 2: Fallback to filesystem (for older jobs or if DB storage failed)
-    else if (metadata?.filePath) {
-      if (fs.existsSync(metadata.filePath)) {
-        try {
-          const fileStats = fs.statSync(metadata.filePath);
-          if (fileStats.size > 0) {
-            job.document = {
-              // dataUrl removed
-              mimeType: mimeType,
-              name: filename,
-              size: fileStats.size
-            };
-            documentAvailable = true;
-          } else {
-            documentError = 'Document file is empty';
-            console.warn(`[Validation] Job ${id} has file ${metadata.filePath} but it's empty`);
+    // Document existence validation with decryption
+    let documentAvailable = false;
+    let documentError = null;
+
+    try {
+      // Check 1: Document in database
+      const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
+      if (document) {
+        // Verify document content exists and is readable
+        if (document.content && document.content.length > 0) {
+          job.document = {
+            mimeType: document.mimeType,
+            name: document.filename,
+            size: document.size
+          };
+          documentAvailable = true;
+
+          // Fetch analysis
+          const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
+          if (analysis) {
+            job.analysis = JSON.parse(analysis.result);
           }
-        } catch (err) {
-          documentError = 'Failed to read document file';
-          console.error('Error reading file for job:', id, err);
+        } else {
+          documentError = 'Document content is empty';
+          console.warn(`[Validation] Job ${id} has document record but empty content`);
         }
-      } else {
-        documentError = 'Document file not found';
-        console.warn(`[Validation] Job ${id} references missing file: ${metadata.filePath}`);
       }
+      // Check 2: Fallback to filesystem
+      else if (metadata?.filePath) {
+        if (fs.existsSync(metadata.filePath)) {
+          try {
+            const fileStats = fs.statSync(metadata.filePath);
+            if (fileStats.size > 0) {
+              job.document = {
+                mimeType: metadata.mimetype,
+                name: metadata.originalname,
+                size: fileStats.size
+              };
+              documentAvailable = true;
+            } else {
+              documentError = 'Document file is empty';
+              console.warn(`[Validation] Job ${id} has file ${metadata.filePath} but it's empty`);
+            }
+          } catch (err) {
+            documentError = 'Failed to read document file';
+            console.error('Error reading file for job:', id, err);
+          }
+        } else {
+          documentError = 'Document file not found';
+          console.warn(`[Validation] Job ${id} references missing file: ${metadata.filePath}`);
+        }
+      }
+      // Check 3: No document found anywhere
+      else {
+        documentError = 'Document not found in database or filesystem';
+        console.warn(`[Validation] Job ${id} has no document reference`);
+      }
+    } catch (err) {
+      documentError = 'Database error while fetching document';
+      console.error('Error fetching document/analysis from DB:', err);
     }
-    // Check 3: No document found anywhere
-    else {
-      documentError = 'Document not found in database or filesystem';
-      console.warn(`[Validation] Job ${id} has no document reference`);
+
+    // Return structured response with document availability status
+    const response = {
+      job,
+      documentAvailable,
+      documentError: documentError || (documentAvailable ? null : 'Document not available')
+    };
+
+    // If document is not available, return appropriate error
+    if (!documentAvailable) {
+      return res.status(404).json({
+        errorCode: 'DOCUMENT_NOT_FOUND',
+        error: documentError || 'Document content not available',
+        ...response
+      });
     }
-  } catch (err) {
-    documentError = 'Database error while fetching document';
-    console.error('Error fetching document/analysis from DB:', err);
-  }
 
-  // Return structured response with document availability status
-  const response = {
-    job,
-    documentAvailable,
-    documentError: documentError || (documentAvailable ? null : 'Document not available')
-  };
-
-  // If document is not available, return appropriate error
-  if (!documentAvailable) {
-    return res.status(404).json({
-      errorCode: 'DOCUMENT_NOT_FOUND',
-      error: documentError || 'Document content not available',
-      ...response
+    res.json(response);
+  } catch (error) {
+    console.error("RELEASE GET JOB ERROR:", error);
+    return res.status(500).json({
+      errorCode: 'INTERNAL_ERROR',
+      message: "Get job function crashed",
+      error: error.message
     });
   }
-
-  res.json(response);
 });
 
 // Get document content (decrypted, for browser viewing/printing)
@@ -417,88 +421,79 @@ router.get('/:id/content', async (req, res) => {
     let mimeType = 'application/octet-stream';
     let filename = job.documentName || 'document';
 
-    try {
-      // Check 1: Document in database
-      const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
-      if (document && document.content && document.content.length > 0) {
-        fileBuffer = document.content;
-        mimeType = document.mimeType || mimeType;
-        filename = document.filename || filename;
+    // Check 1: Document in database
+    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
+    if (document && document.content && document.content.length > 0) {
+      fileBuffer = document.content;
+      mimeType = document.mimeType || mimeType;
+      filename = document.filename || filename;
 
-        // Check if document is encrypted
-        if (document.encryptionMetadata) {
-          try {
-            const encryptionMeta = JSON.parse(document.encryptionMetadata);
-            const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
+      // Check if document is encrypted
+      if (document.encryptionMetadata) {
+        try {
+          const encryptionMeta = JSON.parse(document.encryptionMetadata);
+          const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
 
-            // Decrypt the file content
-            const secret = encryptionMeta.secret || `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
-            const iv = encryptionMeta.iv || [];
-            const authTag = encryptionMeta.authTag || [];
+          // Decrypt the file content
+          const secret = encryptionMeta.secret || `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
+          const iv = encryptionMeta.iv || [];
+          const authTag = encryptionMeta.authTag || [];
 
-            if (iv.length > 0 && authTag.length > 0) {
-              const decryptedBuffer = decryptFileForViewing(fileBuffer, iv, authTag, secret);
-              fileBuffer = decryptedBuffer;
-              console.log(`[Content] Decrypted document for job ${id}`);
-            } else {
-              console.warn(`[Content] Missing IV/authTag for encrypted document ${id}, serving as-is`);
-            }
-          } catch (decryptErr) {
-            console.error('[Content] Decryption error:', decryptErr);
-            return res.status(500).send('Unable to process document. Please contact administrator.');
+          if (iv && Array.isArray(iv) && iv.length > 0 && authTag && Array.isArray(authTag) && authTag.length > 0) {
+            const decryptedBuffer = decryptFileForViewing(fileBuffer, iv, authTag, secret);
+            fileBuffer = decryptedBuffer;
+            console.log(`[Content] Decrypted document for job ${id}`);
+          } else {
+            console.warn(`[Content] Missing or invalid encryption metadata for job ${id}, serving as-is`);
           }
+        } catch (decryptErr) {
+          console.error('[Content] Decryption error:', decryptErr);
+          return res.status(500).send('Unable to process document. Please contact administrator.');
         }
       }
-      // Check 2: Fallback to filesystem
-      else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
-        const fileStats = fs.statSync(metadata.filePath);
-        if (fileStats.size > 0) {
-          fileBuffer = fs.readFileSync(metadata.filePath);
-          mimeType = metadata.mimetype || mimeType;
-          filename = metadata.originalname || filename;
-
-          // Check if file is encrypted by extension
-          if (filename.includes('.enc.')) {
-            try {
-              const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
-              const secret = `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
-
-              // For filesystem files, we'd need stored IV/authTag
-              // This is a limitation - filesystem storage should include metadata file
-              console.warn(`[Content] Encrypted file ${filename} from filesystem - metadata may be incomplete`);
-
-              // Remove .enc extension for proper MIME type
-              filename = filename.replace(/\.enc(\.\w+)$/, '$1');
-            } catch (decryptErr) {
-              console.error('[Content] File decryption error:', decryptErr);
-              return res.status(500).send('Unable to process document. Please contact administrator.');
-            }
-          }
-        }
-      }
-
-      // Validate we have content
-      if (!fileBuffer || fileBuffer.length === 0) {
-        console.warn(`[Content] No document content found for job ${id}`);
-        return res.status(404).send('Document content not available');
-      }
-
-      // Set proper headers for browser viewing
-      res.setHeader('Content-Type', mimeType);
-      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-      res.setHeader('Content-Length', fileBuffer.length);
-
-      // Stream the decrypted content
-      res.send(fileBuffer);
-      console.log(`[Content] Served ${mimeType} document for job ${id} (${fileBuffer.length} bytes)`);
-
-    } catch (err) {
-      console.error('[Content] Error fetching document:', err);
-      return res.status(500).send('Unable to process document. Please contact administrator.');
     }
-  } catch (err) {
-    console.error('[Content] Unexpected error:', err);
-    res.status(500).send('Unable to process document. Please contact administrator.');
+    // Check 2: Fallback to filesystem
+    else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
+      const fileStats = fs.statSync(metadata.filePath);
+      if (fileStats.size > 0) {
+        fileBuffer = fs.readFileSync(metadata.filePath);
+        mimeType = metadata.mimetype || mimeType;
+        filename = metadata.originalname || filename;
+
+        // Check if file is encrypted by extension
+        if (filename.includes('.enc.')) {
+          try {
+            const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
+            const secret = `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
+            console.warn(`[Content] Encrypted file ${filename} from filesystem - metadata may be incomplete`);
+            // Note: Filesystem files might fail if metadata isn't stored elsewhere.
+          } catch (decryptErr) {
+            console.error('[Content] File decryption error:', decryptErr);
+          }
+        }
+      }
+    }
+
+    // Validate we have content
+    if (!fileBuffer || fileBuffer.length === 0) {
+      console.warn(`[Content] No document content found for job ${id}`);
+      return res.status(404).send('Document content not available');
+    }
+
+    // Set proper headers for browser viewing
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Content-Length', fileBuffer.length);
+
+    // Stream the decrypted content
+    res.send(fileBuffer);
+    console.log(`[Content] Served ${mimeType} document for job ${id} (${fileBuffer.length} bytes)`);
+
+  } catch (error) {
+    console.error("RELEASE CONTENT ERROR:", error);
+    if (!res.headersSent) {
+      res.status(500).send("Content streaming function crashed: " + error.message);
+    }
   } finally {
     activeOperations.delete(id);
   }
@@ -518,104 +513,63 @@ router.post('/:id/view', async (req, res) => {
     const metadata = expirationMetadata.get(id);
 
     if (metadata) {
-      // Verify token matches
       if (metadata.token !== token) {
-        return res.status(403).json({
-          errorCode: 'INVALID_TOKEN',
-          error: 'Invalid token'
-        });
+        return res.status(403).json({ errorCode: 'INVALID_TOKEN', error: 'Invalid token' });
       }
 
-      // Verify expiration (server time check)
       if (currentServerTime >= metadata.expiresAt) {
-        // Expired - clean up
         expirationMetadata.delete(id);
         if (metadata.filePath) {
           try {
-            if (fs.existsSync(metadata.filePath)) {
-              fs.unlinkSync(metadata.filePath);
-            }
-          } catch (err) {
-            console.error('Error deleting expired file:', err);
-          }
+            if (fs.existsSync(metadata.filePath)) fs.unlinkSync(metadata.filePath);
+          } catch (err) { console.error('Error deleting expired file:', err); }
         }
-        return res.status(410).json({
-          errorCode: 'LINK_EXPIRED',
-          error: 'Print link has expired'
-        });
+        return res.status(410).json({ errorCode: 'LINK_EXPIRED', error: 'Print link has expired' });
       }
     }
 
     const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) return res.status(404).json({
-      errorCode: 'JOB_NOT_FOUND',
-      error: 'Job not found'
-    });
-    if (!token || token !== job.secureToken) return res.status(403).json({
-      errorCode: 'INVALID_TOKEN',
-      error: 'Invalid token'
-    });
+    if (!job) return res.status(404).json({ errorCode: 'JOB_NOT_FOUND', error: 'Job not found' });
+    if (!token || token !== job.secureToken) return res.status(403).json({ errorCode: 'INVALID_TOKEN', error: 'Invalid token' });
 
-    // REMOVED: Single-view enforcement check
-    // Job can be viewed multiple times until expiration
-
-    // Document existence validation with decryption
+    // Document existence validation
     let documentData = null;
     let documentError = null;
 
-    try {
-      // Check 1: Document in database
-      const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
-      if (document) {
-        // Verify document content exists and is readable
-        if (document.content && document.content.length > 0) {
-          documentData = {
-            // dataUrl removed
-            mimeType: mimeType,
-            name: filename,
-            size: document.size
-          };
-        } else {
-          documentError = 'Document content is empty';
-          console.warn(`[View] Job ${id} has document record but empty content`);
-        }
+    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
+    if (document) {
+      if (document.content && document.content.length > 0) {
+        documentData = {
+          mimeType: document.mimeType,
+          name: document.filename,
+          size: document.size
+        };
+      } else {
+        documentError = 'Document content is empty';
       }
-      // Check 2: Fallback to filesystem
-      else if (metadata?.filePath) {
-        if (fs.existsSync(metadata.filePath)) {
-          try {
-            const fileStats = fs.statSync(metadata.filePath);
-            if (fileStats.size > 0) {
-              documentData = {
-                // dataUrl removed
-                mimeType: mimeType,
-                name: filename,
-                size: fileStats.size
-              };
-            } else {
-              documentError = 'Document file is empty';
-              console.warn(`[View] Job ${id} has file ${metadata.filePath} but it's empty`);
-            }
-          } catch (err) {
-            documentError = 'Failed to read document file';
-            console.error('[View] Error reading file for job:', id, err);
+    } else if (metadata?.filePath) {
+      if (fs.existsSync(metadata.filePath)) {
+        try {
+          const fileStats = fs.statSync(metadata.filePath);
+          if (fileStats.size > 0) {
+            documentData = {
+              mimeType: metadata.mimetype,
+              name: metadata.originalname,
+              size: fileStats.size
+            };
+          } else {
+            documentError = 'Document file is empty';
           }
-        } else {
-          documentError = 'Document file not found';
-          console.warn(`[View] Job ${id} references missing file: ${metadata.filePath}`);
+        } catch (err) {
+          documentError = 'Failed to read document file';
         }
+      } else {
+        documentError = 'Document file not found';
       }
-      // Check 3: No document found
-      else {
-        documentError = 'Document not found in database or filesystem';
-        console.warn(`[View] Job ${id} has no document reference`);
-      }
-    } catch (err) {
-      documentError = 'Database error while fetching document';
-      console.error('[View] Error fetching document from DB:', err);
+    } else {
+      documentError = 'Document not found';
     }
 
-    // If document is not available, return error
     if (!documentData) {
       return res.status(404).json({
         errorCode: 'DOCUMENT_NOT_FOUND',
@@ -623,39 +577,29 @@ router.post('/:id/view', async (req, res) => {
       });
     }
 
-    // Record the view (but don't prevent future views)
+    // Record the view
     const now = new Date().toISOString();
     const viewId = nanoid();
-
-    // Log the view for audit trail (don't increment viewCount to allow multiple views)
     db.prepare(`INSERT INTO job_views (id, jobId, userId, viewedAt, userAgent, ipAddress) 
       VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(
-        viewId,
-        id,
-        userId || 'anonymous',
-        now,
-        req.headers['user-agent'] || '',
-        req.ip || req.connection.remoteAddress || ''
-      );
-
-    // Update in-memory metadata (don't change viewCount)
-    if (metadata) {
-      console.log(`[View] Job ${id} viewed by user ${userId} (multiple views allowed)`);
-    }
+      .run(viewId, id, userId || 'anonymous', now, req.headers['user-agent'] || '', req.ip || '');
 
     res.json({
       success: true,
       document: documentData,
-      viewCount: job.viewCount, // Return original view count
-      message: 'Document preview opened. Multiple views allowed until expiration.'
+      viewCount: job.viewCount,
+      message: 'Document preview opened.'
     });
-  } catch (err) {
-    console.error('Error during job view:', err);
-    res.status(500).json({
-      errorCode: 'INTERNAL_ERROR',
-      error: 'Failed to open document preview'
-    });
+
+  } catch (error) {
+    console.error("VIEW JOB ERROR:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        errorCode: 'INTERNAL_ERROR',
+        message: "View function crashed",
+        error: error.message
+      });
+    }
   } finally {
     activeOperations.delete(id);
   }
@@ -741,9 +685,13 @@ router.post('/:id/release', (req, res) => {
       message: 'Print job released successfully!',
       status: 'released'
     });
-  } catch (err) {
-    console.error('Error during job release:', err);
-    res.status(500).json({ error: 'Failed to release print job' });
+  } catch (error) {
+    console.error("RELEASE ERROR:", error);
+    res.status(500).json({
+      errorCode: 'INTERNAL_ERROR',
+      message: "Release function crashed",
+      error: error.message
+    });
   } finally {
     activeOperations.delete(id);
   }
