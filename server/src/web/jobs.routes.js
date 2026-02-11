@@ -411,6 +411,139 @@ router.get('/:id', async (req, res) => {
   res.json(response);
 });
 
+// Get document content (decrypted, for browser viewing/printing)
+// This endpoint returns the RAW file stream, not JSON
+router.get('/:id/content', async (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+  const { token } = req.query;
+  
+  activeOperations.add(id); // Lock job during content fetch
+  
+  try {
+    // Validate token and expiration from server memory
+    const currentServerTime = Date.now();
+    const metadata = expirationMetadata.get(id);
+    
+    if (metadata) {
+      // Verify token matches
+      if (metadata.token !== token) {
+        return res.status(403).send('Invalid or expired token');
+      }
+      
+      // Verify expiration (server time check)
+      if (currentServerTime >= metadata.expiresAt) {
+        // Expired - clean up
+        expirationMetadata.delete(id);
+        if (metadata.filePath) {
+          try {
+            if (fs.existsSync(metadata.filePath)) {
+              fs.unlinkSync(metadata.filePath);
+            }
+          } catch (err) {
+            console.error('Error deleting expired file:', err);
+          }
+        }
+        return res.status(410).send('Print link has expired');
+      }
+    }
+    
+    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+    if (!job) return res.status(404).send('Job not found');
+    if (!token || token !== job.secureToken) return res.status(403).send('Invalid token');
+    
+    // Fetch and decrypt document
+    let fileBuffer = null;
+    let mimeType = 'application/octet-stream';
+    let filename = job.documentName || 'document';
+    
+    try {
+      // Check 1: Document in database
+      const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
+      if (document && document.content && document.content.length > 0) {
+        fileBuffer = document.content;
+        mimeType = document.mimeType || mimeType;
+        filename = document.filename || filename;
+        
+        // Check if document is encrypted
+        if (document.encryptionMetadata) {
+          try {
+            const encryptionMeta = JSON.parse(document.encryptionMetadata);
+            const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
+            
+            // Decrypt the file content
+            const secret = encryptionMeta.secret || `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
+            const iv = encryptionMeta.iv || [];
+            const authTag = encryptionMeta.authTag || [];
+            
+            if (iv.length > 0 && authTag.length > 0) {
+              const decryptedBuffer = decryptFileForViewing(fileBuffer, iv, authTag, secret);
+              fileBuffer = decryptedBuffer;
+              console.log(`[Content] Decrypted document for job ${id}`);
+            } else {
+              console.warn(`[Content] Missing IV/authTag for encrypted document ${id}, serving as-is`);
+            }
+          } catch (decryptErr) {
+            console.error('[Content] Decryption error:', decryptErr);
+            return res.status(500).send('Unable to process document. Please contact administrator.');
+          }
+        }
+      } 
+      // Check 2: Fallback to filesystem
+      else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
+        const fileStats = fs.statSync(metadata.filePath);
+        if (fileStats.size > 0) {
+          fileBuffer = fs.readFileSync(metadata.filePath);
+          mimeType = metadata.mimetype || mimeType;
+          filename = metadata.originalname || filename;
+          
+          // Check if file is encrypted by extension
+          if (filename.includes('.enc.')) {
+            try {
+              const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
+              const secret = `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
+              
+              // For filesystem files, we'd need stored IV/authTag
+              // This is a limitation - filesystem storage should include metadata file
+              console.warn(`[Content] Encrypted file ${filename} from filesystem - metadata may be incomplete`);
+              
+              // Remove .enc extension for proper MIME type
+              filename = filename.replace(/\.enc(\.\w+)$/, '$1');
+            } catch (decryptErr) {
+              console.error('[Content] File decryption error:', decryptErr);
+              return res.status(500).send('Unable to process document. Please contact administrator.');
+            }
+          }
+        }
+      }
+      
+      // Validate we have content
+      if (!fileBuffer || fileBuffer.length === 0) {
+        console.warn(`[Content] No document content found for job ${id}`);
+        return res.status(404).send('Document content not available');
+      }
+      
+      // Set proper headers for browser viewing
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader('Content-Length', fileBuffer.length);
+      
+      // Stream the decrypted content
+      res.send(fileBuffer);
+      console.log(`[Content] Served ${mimeType} document for job ${id} (${fileBuffer.length} bytes)`);
+      
+    } catch (err) {
+      console.error('[Content] Error fetching document:', err);
+      return res.status(500).send('Unable to process document. Please contact administrator.');
+    }
+  } catch (err) {
+    console.error('[Content] Unexpected error:', err);
+    res.status(500).send('Unable to process document. Please contact administrator.');
+  } finally {
+    activeOperations.delete(id);
+  }
+});
+
 // View job document (multiple views allowed) - with server-side decryption
 router.post('/:id/view', async (req, res) => {
   const db = req.db;
