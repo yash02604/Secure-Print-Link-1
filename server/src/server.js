@@ -33,7 +33,11 @@ app.use(express.json({ limit: '10mb' }));
 app.use(morgan('dev'));
 
 // initialize DB
-const db = createDb(join(__dirname, '../data/secureprint.db'));
+const dbPath = process.env.VERCEL
+  ? '/tmp/secureprint.db'
+  : join(__dirname, '../data/secureprint.db');
+
+const db = createDb(dbPath);
 app.set('db', db);
 
 // routes
@@ -168,7 +172,7 @@ io.on('connection', (socket) => {
       // Validate access
       const conversation = db.prepare(`SELECT * FROM conversations WHERE id = ? AND ${column} = ?`)
         .get(conversationId, value);
-      
+
       if (!conversation) {
         return;
       }
@@ -204,10 +208,18 @@ io.on('connection', (socket) => {
   });
 });
 
-httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`SecurePrint backend running on http://0.0.0.0:${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Socket.IO enabled for real-time chat`);
-});
+if (process.env.NODE_ENV !== 'test') {
+  // Only listen if not triggered by Vercel/Test
+  // Vercel handles the server via the exported app
+  if (!process.env.VERCEL) {
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      console.log(`SecurePrint backend running on http://0.0.0.0:${PORT}`);
+      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`Socket.IO enabled for real-time chat`);
+    });
+  }
+}
+
+export default app;
 
 

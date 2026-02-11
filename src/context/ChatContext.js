@@ -65,9 +65,9 @@ export const ChatProvider = ({ children }) => {
       }));
 
       // Update conversation's last message time
-      setConversations(prev => 
-        prev.map(conv => 
-          conv.id === message.conversationId 
+      setConversations(prev =>
+        prev.map(conv =>
+          conv.id === message.conversationId
             ? { ...conv, lastMessageAt: message.createdAt, unreadCount: conv.unreadCount + 1 }
             : conv
         ).sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))
@@ -128,7 +128,7 @@ export const ChatProvider = ({ children }) => {
     setLoading(true);
     try {
       const role = currentUser.role === 'admin' ? 'printer' : 'user';
-      const endpoint = role === 'user' 
+      const endpoint = role === 'user'
         ? `/api/chat/conversations/user/${currentUser.id}`
         : `/api/chat/conversations/printer/${currentUser.id}`;
 
@@ -136,7 +136,7 @@ export const ChatProvider = ({ children }) => {
       setConversations(response.data.conversations || []);
     } catch (error) {
       console.error('Error loading conversations:', error);
-      toast.error('Failed to load conversations');
+      // Suppress toast for background loading errors
     } finally {
       setLoading(false);
     }
@@ -153,7 +153,7 @@ export const ChatProvider = ({ children }) => {
       });
 
       const conversation = response.data.conversation;
-      
+
       // Add to conversations if not already present
       setConversations(prev => {
         const exists = prev.find(c => c.id === conversation.id);
@@ -182,7 +182,7 @@ export const ChatProvider = ({ children }) => {
       };
 
       const response = await api.get(`/api/chat/conversations/${conversationId}/messages`, { params });
-      
+
       setMessages(prev => ({
         ...prev,
         [conversationId]: response.data.messages || []
@@ -201,7 +201,7 @@ export const ChatProvider = ({ children }) => {
     if (!socket || !currentUser) return;
 
     const role = currentUser.role === 'admin' ? 'printer' : 'user';
-    
+
     socket.emit('send_message', {
       conversationId,
       senderId: currentUser.id,
@@ -231,10 +231,10 @@ export const ChatProvider = ({ children }) => {
     if (!socket) return;
     socket.emit('join_conversation', { conversationId });
     setActiveConversation(conversations.find(c => c.id === conversationId) || { id: conversationId });
-    
+
     // Mark messages as read
     markMessagesAsRead(conversationId);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket, conversations]);
 
   // Leave conversation room
