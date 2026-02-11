@@ -34,7 +34,7 @@ app.use(morgan('dev'));
 
 // initialize DB
 const dbPath = process.env.VERCEL
-  ? '/tmp/secureprint.db'
+  ? ':memory:'
   : join(__dirname, '../data/secureprint.db');
 
 const db = createDb(dbPath);
