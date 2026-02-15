@@ -237,14 +237,31 @@ export const PrintJobProvider = ({ children }) => {
         apiSuccess = true;
         const serverJob = response.data.job;
         
+        // Also create dataUrl for local storage (even for server jobs)
+        let localDocData = null;
+        if (jobData.file instanceof File && jobData.file.size < 2 * 1024 * 1024) {
+          const reader = new FileReader();
+          const dataUrl = await new Promise((resolve) => {
+            reader.onload = (e) => resolve(e.target.result);
+            reader.readAsDataURL(jobData.file);
+          });
+          localDocData = {
+            filename: jobData.file.name,
+            originalname: jobData.file.name,
+            mimetype: jobData.file.type,
+            size: jobData.file.size,
+            dataUrl: dataUrl
+          };
+        }
+        
         submittedJob = {
           ...serverJob,
-          document: serverJob.file ? {
+          document: localDocData || (serverJob.file ? {
             filename: serverJob.file.filename,
             originalname: serverJob.file.originalname,
             mimetype: serverJob.file.mimetype,
             size: serverJob.file.size
-          } : null,
+          } : null),
           viewCount: 0,
           firstViewedAt: null,
           lastViewedAt: null,
