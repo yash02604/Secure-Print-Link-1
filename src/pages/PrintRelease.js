@@ -976,46 +976,16 @@ const PrintRelease = () => {
         contentUrl = `/api/jobs/${job.id}/content?token=${encodeURIComponent(token)}`;
       }
 
-      // Create hidden iframe for printing
-      const iframe = document.createElement('iframe');
-      iframe.style.position = 'fixed';
-      iframe.style.right = '0';
-      iframe.style.bottom = '0';
-      iframe.style.width = '0';
-      iframe.style.height = '0';
-      iframe.style.border = '0';
-      document.body.appendChild(iframe);
+      // Open document in new tab - browsers block print() from iframes
+      const printWindow = window.open(contentUrl, '_blank');
+      
+      if (!printWindow) {
+        toast.error('Failed to open print window. Please check your popup blocker.');
+        return;
+      }
 
-      // Set iframe source
-      iframe.src = contentUrl;
-
-      // Wait for iframe to load, then print
-      iframe.onload = () => {
-        setTimeout(() => {
-          try {
-            if (iframe.contentWindow) {
-              iframe.contentWindow.focus();
-              iframe.contentWindow.print();
-              toast.success('Print dialog opened');
-            } else {
-              toast.error('Failed to access document for printing');
-            }
-          } catch (error) {
-            console.error('Print failed:', error);
-            toast.error('Failed to trigger print dialog');
-          } finally {
-            // Cleanup iframe after a delay
-            setTimeout(() => {
-              document.body.removeChild(iframe);
-            }, 5000);
-          }
-        }, 1000); // Give browser time to render
-      };
-
-      iframe.onerror = () => {
-        toast.error('Failed to load document for printing');
-        document.body.removeChild(iframe);
-      };
+      // Show instructions to user
+      toast.info('Document opened in new tab. Press Ctrl+P (or Cmd+P on Mac) to print.');
 
     } catch (error) {
       console.error('Failed to print document:', error);
