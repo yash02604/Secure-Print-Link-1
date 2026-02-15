@@ -907,8 +907,22 @@ const PrintRelease = () => {
         return;
       }
 
-      // Open the server endpoint directly - server will decrypt and stream the file
-      const contentUrl = `/api/jobs/${job.id}/content?token=${encodeURIComponent(token)}`;
+      let contentUrl;
+
+      // Check if this is a local job (stored in localStorage)
+      if (job.id.startsWith('local_')) {
+        // For local jobs, use the dataUrl directly if available
+        if (job.document?.dataUrl) {
+          contentUrl = job.document.dataUrl;
+        } else {
+          toast.error('Document data not available for this local job');
+          return;
+        }
+      } else {
+        // For server jobs, fetch from API
+        contentUrl = `/api/jobs/${job.id}/content?token=${encodeURIComponent(token)}`;
+      }
+
       const viewWindow = window.open(contentUrl, '_blank');
 
       if (!viewWindow) {
@@ -940,6 +954,22 @@ const PrintRelease = () => {
         return;
       }
 
+      let contentUrl;
+
+      // Check if this is a local job (stored in localStorage)
+      if (job.id.startsWith('local_')) {
+        // For local jobs, use the dataUrl directly if available
+        if (job.document?.dataUrl) {
+          contentUrl = job.document.dataUrl;
+        } else {
+          toast.error('Document data not available for printing this local job');
+          return;
+        }
+      } else {
+        // For server jobs, fetch from API
+        contentUrl = `/api/jobs/${job.id}/content?token=${encodeURIComponent(token)}`;
+      }
+
       // Create hidden iframe for printing
       const iframe = document.createElement('iframe');
       iframe.style.position = 'fixed';
@@ -950,8 +980,7 @@ const PrintRelease = () => {
       iframe.style.border = '0';
       document.body.appendChild(iframe);
 
-      // Set iframe source to server endpoint
-      const contentUrl = `/api/jobs/${job.id}/content?token=${encodeURIComponent(token)}`;
+      // Set iframe source
       iframe.src = contentUrl;
 
       // Wait for iframe to load, then print
