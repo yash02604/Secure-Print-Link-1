@@ -28,10 +28,6 @@
       "dest": "/robots.txt"
     },
     {
-      "src": "/api/(.*)",
-      "dest": "/api/index.js"
-    },
-    {
       "src": "/(.*)",
       "dest": "/index.html"
     }
