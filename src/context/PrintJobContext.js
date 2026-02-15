@@ -150,20 +150,27 @@ export const PrintJobProvider = ({ children }) => {
   // Save print jobs to localStorage whenever they change (for offline access)
   useEffect(() => {
     try {
-      // Remove sensitive document data before storing
+      // Store document data including dataUrl for small files
       const jobsToStore = printJobs.map(job => {
-        const { document, encryption, ...safeJob } = job;
+        const { encryption, ...safeJob } = job;
         
-        // Only store non-sensitive metadata
+        // Store document metadata AND dataUrl (needed for View/Print)
+        let docData = null;
+        if (job.document) {
+          docData = {
+            filename: job.document.filename || job.document.name,
+            mimetype: job.document.mimetype || job.document.type,
+            size: job.document.size,
+          };
+          // Store dataUrl if available (small files only - <2MB)
+          if (job.document.dataUrl) {
+            docData.dataUrl = job.document.dataUrl;
+          }
+        }
+        
         return {
           ...safeJob,
-          // Store minimal document info without actual data
-          document: document ? {
-            filename: document.filename || document.name,
-            mimetype: document.mimetype || document.type,
-            size: document.size,
-            // Do NOT store document.data or content
-          } : null,
+          document: docData,
           // Store encryption metadata (IV and secret are needed for decryption)
           encryption: encryption || null
         };

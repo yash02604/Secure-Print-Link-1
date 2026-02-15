@@ -914,8 +914,11 @@ const PrintRelease = () => {
         // For local jobs, use the dataUrl directly if available
         if (job.document?.dataUrl) {
           contentUrl = job.document.dataUrl;
+        } else if (job.document?.size && job.document.size > 2 * 1024 * 1024) {
+          toast.error('Large files (>2MB) cannot be printed in offline mode. Please submit when connected to server.');
+          return;
         } else {
-          toast.error('Document data not available for this local job');
+          toast.error('Document data not available. Try refreshing the page or resubmit the job.');
           return;
         }
       } else {
@@ -961,8 +964,11 @@ const PrintRelease = () => {
         // For local jobs, use the dataUrl directly if available
         if (job.document?.dataUrl) {
           contentUrl = job.document.dataUrl;
+        } else if (job.document?.size && job.document.size > 2 * 1024 * 1024) {
+          toast.error('Large files (>2MB) cannot be printed in offline mode. Please submit when connected to server.');
+          return;
         } else {
-          toast.error('Document data not available for printing this local job');
+          toast.error('Document data not available. Try refreshing the page or resubmit the job.');
           return;
         }
       } else {
