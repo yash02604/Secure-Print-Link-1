@@ -361,8 +361,9 @@ export const PrintJobProvider = ({ children }) => {
       }
 
       // If the document is encrypted, decrypt it before returning
+      // Only decrypt if it's not already decrypted (i.e., if no dataUrl exists)
       let returnDocument = job?.document;
-      if (job?.document?.isEncrypted && job.document.encryptedContent) {
+      if (job?.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
         try {
           // Import decryption function
           const { decryptDocument } = await import('../utils/encryption');

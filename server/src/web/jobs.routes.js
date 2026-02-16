@@ -262,7 +262,9 @@ router.get('/:id', (req, res) => {
         name: document.filename,
         size: document.size,
         // Include encryption info for client-side handling if needed
-        isEncrypted: document.isEncrypted
+        isEncrypted: document.isEncrypted,
+        // Don't include the encrypted content in the response to avoid double processing
+        encryptedContent: undefined
       };
       
       // Fetch analysis
@@ -282,7 +284,8 @@ router.get('/:id', (req, res) => {
           mimeType: metadata.mimetype,
           name: metadata.originalname || job.documentName,
           // Filesystem documents are not marked as encrypted
-          isEncrypted: false
+          isEncrypted: false,
+          encryptedContent: undefined
         };
       } catch (err) {
         console.error('Error reading file for job:', id, err);
@@ -391,7 +394,9 @@ router.post('/:id/view', (req, res) => {
         name: document.filename,
         size: document.size,
         // Include encryption info for client-side handling if needed
-        isEncrypted: document.isEncrypted
+        isEncrypted: document.isEncrypted,
+        // Don't include the encrypted content in the response to avoid double processing
+        encryptedContent: undefined
       };
     } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
       const fileBuffer = fs.readFileSync(metadata.filePath);
@@ -401,7 +406,8 @@ router.post('/:id/view', (req, res) => {
         mimeType: metadata.mimetype,
         name: metadata.originalname || job.documentName,
         // Filesystem documents are not marked as encrypted
-        isEncrypted: false
+        isEncrypted: false,
+        encryptedContent: undefined
       };
     }
 

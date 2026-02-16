@@ -409,16 +409,17 @@ const PrintRelease = () => {
           let processedJob = response.data.job;
           
           // Check if the document is encrypted and needs decryption
-          if (response.data.job.document?.isEncrypted && response.data.job.document.encryptedContent) {
+          // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
+          if (response.data.job.document?.isEncrypted && response.data.job.document.encryptedContent && !response.data.job.document.dataUrl) {
             try {
               // Decrypt the content
               const decryptedBuffer = decryptDocument(response.data.job.document.encryptedContent);
-              
+                  
               // Convert to data URL for preview
               const uint8Array = new Uint8Array(decryptedBuffer);
               const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
               const dataUrl = `data:${response.data.job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
-              
+                  
               processedJob = {
                 ...response.data.job,
                 document: {
@@ -494,7 +495,8 @@ const PrintRelease = () => {
     let documentData = cachedDocument || serverJob?.document || printJobs.find(j => j.id === jobId)?.document;
     
     // Handle encrypted document
-    if (serverJob?.document?.isEncrypted && serverJob.document.encryptedContent) {
+    // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
+    if (serverJob?.document?.isEncrypted && serverJob.document.encryptedContent && !serverJob.document.dataUrl) {
       try {
         const decryptedBuffer = decryptDocument(serverJob.document.encryptedContent);
         
@@ -687,7 +689,8 @@ const PrintRelease = () => {
     let documentData = cachedDocument || serverJob?.document;
     
     // Handle encrypted document from serverJob
-    if (serverJob?.document?.isEncrypted && serverJob.document.encryptedContent) {
+    // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
+    if (serverJob?.document?.isEncrypted && serverJob.document.encryptedContent && !serverJob.document.dataUrl) {
       try {
         const decryptedBuffer = decryptDocument(serverJob.document.encryptedContent);
         
@@ -775,13 +778,15 @@ const PrintRelease = () => {
   // If cachedDocument exists, attach it to jobs that don't have document data
   // Also handle encrypted documents that need decryption
   const jobsWithDocuments = jobsToShow.map(job => {
-    // Priority 1: Job already has document with dataUrl
+    // Priority 1: Job already has document with dataUrl (already decrypted by server)
     if (job.document?.dataUrl) {
       return job;
     }
     
     // Priority 2: Handle encrypted documents that need decryption
-    if (job.document?.isEncrypted && job.document.encryptedContent) {
+    // Note: This should only happen for locally stored encrypted docs, not server docs
+    // (server should already decrypt before sending)
+    if (job.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
       try {
         // Decrypt the content
         const decryptedBuffer = decryptDocument(job.document.encryptedContent);
@@ -865,7 +870,8 @@ const PrintRelease = () => {
       let job = serverJob || printJobs.find(j => j.id === jobId);
       
       // Handle encrypted document
-      if (job?.document?.isEncrypted && job.document.encryptedContent) {
+      // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
+      if (job?.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
         try {
           const decryptedBuffer = decryptDocument(job.document.encryptedContent);
           
@@ -925,7 +931,8 @@ const PrintRelease = () => {
       // Cache documents for future use
       for (const job of jobsWithDocuments) {
         // Handle encrypted document
-        if (job?.document?.isEncrypted && job.document.encryptedContent) {
+        // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
+        if (job?.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
           try {
             const decryptedBuffer = decryptDocument(job.document.encryptedContent);
             
@@ -1004,7 +1011,8 @@ const PrintRelease = () => {
     let documentData = cachedDocument || job?.document;
     
     // Check if document is encrypted and needs decryption
-    if (job?.document?.isEncrypted && job.document.encryptedContent) {
+    // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
+    if (job?.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
       try {
         // Decrypt the content
         const decryptedBuffer = decryptDocument(job.document.encryptedContent);
@@ -1131,7 +1139,8 @@ const PrintRelease = () => {
     let documentData = cachedDocument || job?.document;
     
     // Check if document is encrypted and needs decryption
-    if (job?.document?.isEncrypted && job.document.encryptedContent) {
+    // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
+    if (job?.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
       try {
         // Decrypt the content
         const decryptedBuffer = decryptDocument(job.document.encryptedContent);
