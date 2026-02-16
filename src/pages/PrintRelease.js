@@ -435,32 +435,8 @@ const PrintRelease = () => {
         if (response.data.job) {
           let processedJob = response.data.job;
           
-          // Check if the document is encrypted and needs decryption
-          // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
-          if (response.data.job.document?.isEncrypted && response.data.job.document.encryptedContent && !response.data.job.document.dataUrl) {
-            try {
-              // Decrypt the content
-              const decryptedBuffer = decryptDocument(response.data.job.document.encryptedContent);
-                  
-              // Convert to data URL for preview
-              const uint8Array = new Uint8Array(decryptedBuffer);
-              const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
-              const dataUrl = `data:${response.data.job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
-                  
-              processedJob = {
-                ...response.data.job,
-                document: {
-                  ...response.data.job.document,
-                  dataUrl,
-                  content: decryptedBuffer
-                }
-              };
-            } catch (decryptionError) {
-              console.error('Failed to decrypt document from server:', decryptionError);
-              // Continue with original job if decryption fails
-              processedJob = response.data.job;
-            }
-          }
+          // Since all decryption now happens server-side, no client-side decryption is needed
+          // Just use the job as received from server
           
           setServerJob(processedJob);
           setLinkTargetJobId(jobId);
@@ -521,29 +497,9 @@ const PrintRelease = () => {
     // Use cached document first, fallback to job document
     let documentData = cachedDocument || serverJob?.document || printJobs.find(j => j.id === jobId)?.document;
     
-    // Handle encrypted document
-    // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
-    if (serverJob?.document?.isEncrypted && serverJob.document.encryptedContent && !serverJob.document.dataUrl) {
-      try {
-        const decryptedBuffer = decryptDocument(serverJob.document.encryptedContent);
-        
-        // Convert to data URL for preview
-        const uint8Array = new Uint8Array(decryptedBuffer);
-        const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
-        const dataUrl = `data:${serverJob.document.mimeType || 'application/octet-stream'};base64,${base64}`;
-        
-        documentData = {
-          ...serverJob.document,
-          dataUrl,
-          content: decryptedBuffer
-        };
-      } catch (decryptionError) {
-        console.error('Failed to decrypt document for auto-print:', decryptionError);
-        toast.error('Failed to decrypt document for printing');
-        return;
-      }
-    }
-
+    // Since all decryption now happens server-side, no client-side decryption is needed
+    // Just use the document as received from server
+    
     // If we have a stored document, load and print it via an iframe
     if (documentData?.dataUrl && !printedViaIframe) {
       console.log('Attempting to print document:', { mimeType: documentData.mimeType, name: documentData.name });
@@ -715,26 +671,8 @@ const PrintRelease = () => {
     // Use cached document or fetch from server/printJobs
     let documentData = cachedDocument || serverJob?.document;
     
-    // Handle encrypted document from serverJob
-    // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
-    if (serverJob?.document?.isEncrypted && serverJob.document.encryptedContent && !serverJob.document.dataUrl) {
-      try {
-        const decryptedBuffer = decryptDocument(serverJob.document.encryptedContent);
-        
-        // Convert to data URL for preview
-        const uint8Array = new Uint8Array(decryptedBuffer);
-        const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
-        const dataUrl = `data:${serverJob.document.mimeType || 'application/octet-stream'};base64,${base64}`;
-        
-        documentData = {
-          ...serverJob.document,
-          dataUrl,
-          content: decryptedBuffer
-        };
-      } catch (decryptionError) {
-        console.error('Failed to decrypt document for auto-release:', decryptionError);
-      }
-    }
+    // Since all decryption now happens server-side, no client-side decryption is needed
+    // Just use the document as received from server
     
     const job = serverJob || printJobs.find(j => j.id === jobId && j.secureToken === token);
     if (!job) return;
@@ -810,32 +748,9 @@ const PrintRelease = () => {
       return job;
     }
     
-    // Priority 2: Handle encrypted documents that need decryption
-    // Note: This should only happen for locally stored encrypted docs, not server docs
-    // (server should already decrypt before sending)
-    if (job.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
-      try {
-        // Decrypt the content
-        const decryptedBuffer = decryptDocument(job.document.encryptedContent);
-        
-        // Convert to data URL for preview
-        const uint8Array = new Uint8Array(decryptedBuffer);
-        const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
-        const dataUrl = `data:${job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
-        
-        return {
-          ...job,
-          document: {
-            ...job.document,
-            dataUrl,
-            content: decryptedBuffer
-          }
-        };
-      } catch (decryptionError) {
-        console.error('Failed to decrypt document in jobs mapping:', decryptionError);
-        return job; // Return job as-is if decryption fails
-      }
-    }
+    // Priority 2: Since all decryption now happens server-side, no client-side decryption is needed
+    // Just return the job as is
+    return job;
     
     // Priority 3: Use cached document if job IDs match
     if (cachedDocument && (linkTargetJobId === job.id || jobsToShow.length === 1)) {
@@ -896,38 +811,12 @@ const PrintRelease = () => {
       // Cache document for future use
       let job = serverJob || printJobs.find(j => j.id === jobId);
       
-      // Handle encrypted document
-      // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
-      if (job?.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
-        try {
-          const decryptedBuffer = decryptDocument(job.document.encryptedContent);
-          
-          // Convert to data URL for preview
-          const uint8Array = new Uint8Array(decryptedBuffer);
-          const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
-          const dataUrl = `data:${job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
-          
-          const documentForCache = {
-            ...job.document,
-            dataUrl,
-            content: decryptedBuffer
-          };
-          
-          if (!cachedDocument) {
-            setCachedDocument(documentForCache);
-          }
-        } catch (decryptionError) {
-          console.error('Failed to decrypt document for caching:', decryptionError);
-          // Fallback to original document if decryption fails
-          if (job?.document && !cachedDocument) {
-            setCachedDocument(job.document);
-          }
-        }
-      } else {
-        // Non-encrypted document
-        if (job?.document && !cachedDocument) {
-          setCachedDocument(job.document);
-        }
+      // Since all decryption now happens server-side, no client-side decryption is needed
+      // Just cache the document as received from server
+      
+      // Non-encrypted document
+      if (job?.document && !cachedDocument) {
+        setCachedDocument(job.document);
       }
     } catch (error) {
       const errorMsg = error.message || 'Failed to release print job';
@@ -957,38 +846,12 @@ const PrintRelease = () => {
       
       // Cache documents for future use
       for (const job of jobsWithDocuments) {
-        // Handle encrypted document
-        // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
-        if (job?.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
-          try {
-            const decryptedBuffer = decryptDocument(job.document.encryptedContent);
-            
-            // Convert to data URL for preview
-            const uint8Array = new Uint8Array(decryptedBuffer);
-            const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
-            const dataUrl = `data:${job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
-            
-            const documentForCache = {
-              ...job.document,
-              dataUrl,
-              content: decryptedBuffer
-            };
-            
-            if (!cachedDocument) {
-              setCachedDocument(documentForCache);
-            }
-          } catch (decryptionError) {
-            console.error('Failed to decrypt document for caching:', decryptionError);
-            // Fallback to original document if decryption fails
-            if (job?.document && !cachedDocument) {
-              setCachedDocument(job.document);
-            }
-          }
-        } else {
-          // Non-encrypted document
-          if (job?.document && !cachedDocument) {
-            setCachedDocument(job.document);
-          }
+        // Since all decryption now happens server-side, no client-side decryption is needed
+        // Just cache the document as received from server
+        
+        // Non-encrypted document
+        if (job?.document && !cachedDocument) {
+          setCachedDocument(job.document);
         }
       }
     } catch (error) {
