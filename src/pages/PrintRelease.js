@@ -751,16 +751,6 @@ const PrintRelease = () => {
     // Priority 2: Since all decryption now happens server-side, no client-side decryption is needed
     // Just return the job as is
     return job;
-    
-    // Priority 3: Use cached document if job IDs match
-    if (cachedDocument && (linkTargetJobId === job.id || jobsToShow.length === 1)) {
-      console.log(`Attaching cached document to job ${job.id}`);
-      return { ...job, document: cachedDocument };
-    }
-    
-    // Priority 4: No document available
-    console.warn(`Job ${job.id} (${job.documentName}) has no document data`);
-    return job;
   });
 
   const handlePinChange = (index, value) => {
