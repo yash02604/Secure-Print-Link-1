@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import styled from 'styled-components';
 import { useAuth } from '../context/AuthContext';
-import { FaUser, FaShieldAlt, FaBell, FaCog, FaSave, FaServer } from 'react-icons/fa';
-import { setApiBaseUrl, getApiBaseUrl } from '../api/client';
-import { toast } from 'react-toastify';
+import { FaUser, FaShieldAlt, FaBell, FaCog, FaSave } from 'react-icons/fa';
 
 const SettingsContainer = styled.div`
   padding: 20px;
@@ -135,7 +133,6 @@ const SaveButton = styled.button`
 
 const Settings = () => {
   const { currentUser } = useAuth();
-  const [serverUrl, setServerUrl] = useState(getApiBaseUrl());
   const [settings, setSettings] = useState({
     name: currentUser?.name || '',
     email: currentUser?.email || '',
@@ -169,37 +166,6 @@ const Settings = () => {
         <h1>Settings</h1>
         <p>Manage your account preferences and system settings</p>
       </PageHeader>
-
-      <SettingsSection>
-        <div className="section-header">
-          <FaServer className="section-icon" />
-          <div className="section-title">Server Configuration</div>
-        </div>
-        
-        <FormGroup>
-          <label>Backend Server URL</label>
-          <input
-            type="text"
-            value={serverUrl}
-            onChange={(e) => setServerUrl(e.target.value)}
-            placeholder="https://your-backend-url.up.railway.app"
-          />
-          <small style={{ color: '#666', marginTop: '4px', display: 'block' }}>
-            Enter your backend server URL (e.g., https://your-app.up.railway.app)
-          </small>
-        </FormGroup>
-        
-        <SaveButton 
-          onClick={() => {
-            setApiBaseUrl(serverUrl);
-            toast.success('Server URL updated! Refresh the page to apply changes.');
-          }}
-          style={{ marginTop: '10px' }}
-        >
-          <FaSave />
-          Save Server URL
-        </SaveButton>
-      </SettingsSection>
 
       <SettingsSection>
         <div className="section-header">

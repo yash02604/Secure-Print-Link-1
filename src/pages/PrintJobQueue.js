@@ -9,6 +9,7 @@ import {
   FaPrint, 
   FaTrash, 
   FaEye, 
+  FaTimes,
   FaCheckCircle,
   FaExclamationTriangle,
   FaClock,
@@ -405,26 +406,24 @@ const PrintJobQueue = () => {
       return;
     }
     
+    if (job.viewCount > 0) {
+      toast.error('Document already viewed (one-time only)');
+      return;
+    }
+
     try {
-      // For server jobs, use the content endpoint directly
-      if (!jobId.startsWith('local_')) {
-        const contentUrl = `/api/jobs/${jobId}/content?token=${encodeURIComponent(job.secureToken)}`;
-        const viewWindow = window.open(contentUrl, '_blank');
-        if (!viewWindow) {
-          toast.error('Failed to open document. Please check your popup blocker.');
-          return;
-        }
-        toast.success('Opening document in new tab...');
+      const documentData = await viewPrintJob(jobId, job.secureToken, currentUser.id);
+      if (documentData?.dataUrl) {
+        // Open in new tab for preview (not download)
+        window.open(documentData.dataUrl, '_blank');
       } else {
-        // For local jobs, use the existing viewPrintJob function
-        const documentData = await viewPrintJob(jobId, job.secureToken, currentUser.id);
-        if (documentData?.dataUrl) {
-          window.open(documentData.dataUrl, '_blank');
-        } else {
-          toast.error('Document data not available for viewing.');
-        }
+        toast.error('Document data not available for viewing.');
       }
     } catch (error) {
+      if (error.message === 'Document already viewed') {
+        // Already handled by viewPrintJob
+        return;
+      }
       toast.error('Failed to view document: ' + error.message);
     }
   };
@@ -626,13 +625,14 @@ const PrintJobQueue = () => {
                 <JobActions>
                   <ActionButton
                     onClick={() => handleViewJob(job.id)}
-                    title="Preview document (multiple views allowed)"
-                    className="success"
+                    disabled={job.viewCount > 0}
+                    title={job.viewCount > 0 ? 'Document already viewed (one-time only)' : 'Preview document (one-time view)'}
+                    className={job.viewCount > 0 ? 'danger' : 'success'}
                   >
-                    <FaEye />
+                    {job.viewCount > 0 ? <FaTimes /> : <FaEye />}
                   </ActionButton>
                   
-                  {job.status === 'pending' && (
+                  {job.status === 'pending' && job.viewCount > 0 && (
                     <ActionButton
                       onClick={() => handleReleaseJob(job.id)}
                       disabled={loading}

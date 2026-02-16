@@ -4,7 +4,6 @@ import multer from 'multer';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import { encryptBufferAES, createEncryptionMetadata } from '../utils/aesCrypto.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -27,21 +26,21 @@ let dbInstance = null;
 setInterval(() => {
   const currentServerTime = Date.now();
   const expiredJobIds = [];
-
+  
   expirationMetadata.forEach((metadata, jobId) => {
     // SECURITY: Only clean up if job is not currently being operated on
     if (currentServerTime >= metadata.expiresAt && !activeOperations.has(jobId)) {
       expiredJobIds.push(jobId);
     }
   });
-
+  
   // Clean up expired jobs
   if (expiredJobIds.length > 0) {
     console.log(`[Cleanup] Removing ${expiredJobIds.length} expired print job(s)`);
     expiredJobIds.forEach(jobId => {
       const metadata = expirationMetadata.get(jobId);
       expirationMetadata.delete(jobId);
-
+      
       // Delete file from filesystem
       if (metadata?.filePath) {
         try {
@@ -88,7 +87,7 @@ router.post('/', (req, res, next) => {
   const userId = body.userId;
   const userName = body.userName;
   const documentName = body.documentName || (req.file?.originalname || 'Document');
-
+  
   if (!userId || !documentName) return res.status(400).json({ error: 'Missing required fields' });
 
   const id = nanoid();
@@ -96,12 +95,12 @@ router.post('/', (req, res, next) => {
 
   try {
     const secureToken = nanoid(32);
-
+    
     // Calculate expiration time (server time) - ATOMIC: Done AFTER upload complete
     const expirationDuration = parseInt(body.expirationDuration || 15); // minutes, default 15
     const currentServerTime = Date.now();
     const expiresAt = currentServerTime + (expirationDuration * 60 * 1000); // Convert minutes to milliseconds
-
+    
     const pages = +(body.pages ?? 1);
     const copies = +(body.copies ?? 1);
     const color = body.color === 'true' || body.color === true;
@@ -121,7 +120,7 @@ router.post('/', (req, res, next) => {
       mimetype: req.file?.mimetype,
       originalname: req.file?.originalname
     });
-
+    
     // Prefer explicit public base URL if provided (useful behind tunnels/proxies)
     const host = req.headers['x-forwarded-host'] || req.headers.host;
     const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
@@ -152,55 +151,13 @@ router.post('/', (req, res, next) => {
     // Store document in DB and run analysis
     if (req.file) {
       const documentId = nanoid();
-
-      try {
-        const fileContent = fs.readFileSync(req.file.path);
-
-        // SERVER-SIDE ENCRYPTION
-        // Generate a consistently unique secret for this job
-        const secret = `${id}_${userId}_${Date.now()}`;
-
-        console.log(`[Encryption] Encrypting file ${req.file.originalname} for job ${id}`);
-
-        // Encrypt the buffer
-        const { encryptedData, iv, authTag } = encryptBufferAES(fileContent, secret);
-
-        // Create metadata for storage
-        const encryptionMetadata = createEncryptionMetadata(secret, iv, authTag);
-
-        // Store encrypted content in DB
-        db.prepare(`INSERT INTO documents (
-          id, jobId, content, mimeType, filename, size, createdAt, encryptionMetadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-          documentId,
-          id,
-          encryptedData,
-          req.file.mimetype,
-          req.file.originalname,
-          req.file.size,
-          new Date().toISOString(),
-          JSON.stringify(encryptionMetadata)
-        );
-
-        // SECURITY: Delete the plain-text file from disk immediately
-        if (fs.existsSync(req.file.path)) {
-          fs.unlinkSync(req.file.path);
-          console.log(`[Security] Deleted plain-text upload: ${req.file.path}`);
-        }
-
-        // Update in-memory metadata to reflect file is gone from disk
-        const currentMeta = expirationMetadata.get(id);
-        if (currentMeta) {
-          expirationMetadata.set(id, { ...currentMeta, filePath: null });
-        }
-
-      } catch (err) {
-        console.error('[Encryption] Failed to encrypt/store file:', err);
-        // If DB store failed, we might still have the file on disk. 
-        // We should probably fail the request or handle it.
-        // For now, let the error propagate to the catch block below.
-        throw err;
-      }
+      const fileContent = fs.readFileSync(req.file.path);
+      
+      db.prepare(`INSERT INTO documents (
+        id, jobId, content, mimeType, filename, size, createdAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        documentId, id, fileContent, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString()
+      );
 
       // Mock Document Analysis
       const analysisId = nanoid();
@@ -210,7 +167,7 @@ router.post('/', (req, res, next) => {
         status: 'completed',
         features: ['text-extraction', 'metadata-analysis']
       };
-
+      
       db.prepare(`INSERT INTO document_analysis (
         id, documentId, analysisType, result, status, createdAt
       ) VALUES (?, ?, ?, ?, ?, ?)`).run(
@@ -220,11 +177,11 @@ router.post('/', (req, res, next) => {
 
     res.json({
       success: true,
-      job: {
-        id, userId, documentName, pages, copies, color, duplex, stapling, priority, notes,
-        status: 'pending', cost, submittedAt: new Date().toISOString(),
+      job: { 
+        id, userId, documentName, pages, copies, color, duplex, stapling, priority, notes, 
+        status: 'pending', cost, submittedAt: new Date().toISOString(), 
         secureToken, releaseLink, expiresAt: new Date(expiresAt).toISOString(), expirationDuration,
-        file: req.file ? { filename: req.file.filename, originalname: req.file.originalname, mimetype: req.file.mimetype, size: req.file.size } : null
+        file: req.file ? { filename: req.file.filename, originalname: req.file.originalname, mimetype: req.file.mimetype, size: req.file.size } : null 
       }
     });
   } catch (err) {
@@ -235,25 +192,22 @@ router.post('/', (req, res, next) => {
   }
 });
 
-// Get job by id + token (with document existence validation and decryption)
-router.get('/:id', async (req, res) => {
+// Get job by id + token (with single-view enforcement)
+router.get('/:id', (req, res) => {
   const db = req.db;
   const { id } = req.params;
   const { token } = req.query;
-
+  
   // Validate token and expiration from server memory
   const currentServerTime = Date.now();
   const metadata = expirationMetadata.get(id);
-
+  
   if (metadata) {
     // Verify token matches
     if (metadata.token !== token) {
-      return res.status(403).json({
-        errorCode: 'INVALID_TOKEN',
-        error: 'Invalid token'
-      });
+      return res.status(403).json({ error: 'Invalid token' });
     }
-
+    
     // Verify expiration (server time check)
     if (currentServerTime >= metadata.expiresAt) {
       // Expired - clean up
@@ -268,362 +222,82 @@ router.get('/:id', async (req, res) => {
           console.error('Error deleting expired file:', err);
         }
       }
-      return res.status(410).json({
-        errorCode: 'LINK_EXPIRED',
-        error: 'Print link has expired'
-      });
+      return res.status(410).json({ error: 'Print link has expired' });
     }
   }
+  
+  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (token && token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
 
-  try {
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) return res.status(404).json({
-      errorCode: 'JOB_NOT_FOUND',
-      error: 'Job not found'
-    });
-    if (token && token !== job.secureToken) return res.status(403).json({
-      errorCode: 'INVALID_TOKEN',
-      error: 'Invalid token'
-    });
-
-    // Document existence validation with decryption
-    let documentAvailable = false;
-    let documentError = null;
-
-    try {
-      // Check 1: Document in database
-      const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
-      if (document) {
-        // Verify document content exists and is readable
-        if (document.content && document.content.length > 0) {
-          job.document = {
-            mimeType: document.mimeType,
-            name: document.filename,
-            size: document.size
-          };
-          documentAvailable = true;
-
-          // Fetch analysis
-          const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
-          if (analysis) {
-            job.analysis = JSON.parse(analysis.result);
-          }
-        } else {
-          documentError = 'Document content is empty';
-          console.warn(`[Validation] Job ${id} has document record but empty content`);
-        }
-      }
-      // Check 2: Fallback to filesystem
-      else if (metadata?.filePath) {
-        if (fs.existsSync(metadata.filePath)) {
-          try {
-            const fileStats = fs.statSync(metadata.filePath);
-            if (fileStats.size > 0) {
-              job.document = {
-                mimeType: metadata.mimetype,
-                name: metadata.originalname,
-                size: fileStats.size
-              };
-              documentAvailable = true;
-            } else {
-              documentError = 'Document file is empty';
-              console.warn(`[Validation] Job ${id} has file ${metadata.filePath} but it's empty`);
-            }
-          } catch (err) {
-            documentError = 'Failed to read document file';
-            console.error('Error reading file for job:', id, err);
-          }
-        } else {
-          documentError = 'Document file not found';
-          console.warn(`[Validation] Job ${id} references missing file: ${metadata.filePath}`);
-        }
-      }
-      // Check 3: No document found anywhere
-      else {
-        documentError = 'Document not found in database or filesystem';
-        console.warn(`[Validation] Job ${id} has no document reference`);
-      }
-    } catch (err) {
-      documentError = 'Database error while fetching document';
-      console.error('Error fetching document/analysis from DB:', err);
-    }
-
-    // Return structured response with document availability status
-    const response = {
-      job,
-      documentAvailable,
-      documentError: documentError || (documentAvailable ? null : 'Document not available')
-    };
-
-    // If document is not available, return appropriate error
-    if (!documentAvailable) {
-      return res.status(404).json({
-        errorCode: 'DOCUMENT_NOT_FOUND',
-        error: documentError || 'Document content not available',
-        ...response
-      });
-    }
-
-    res.json(response);
-  } catch (error) {
-    console.error("RELEASE GET JOB ERROR:", error);
-    return res.status(500).json({
-      errorCode: 'INTERNAL_ERROR',
-      message: "Get job function crashed",
-      error: error.message
+  // Check if job has been viewed already (single-view enforcement)
+  if (job.viewCount > 0) {
+    return res.status(403).json({ 
+      error: 'Document already viewed (one-time only)',
+      alreadyViewed: true,
+      viewCount: job.viewCount
     });
   }
-});
 
-// Get document content (decrypted, for browser viewing/printing)
-// This endpoint returns the RAW file stream, not JSON
-router.get('/:id/content', async (req, res) => {
-  const db = req.db;
-  const { id } = req.params;
-  const { token } = req.query;
-
-  activeOperations.add(id); // Lock job during content fetch
-
+  // Fetch document from DB if available
   try {
-    // Validate token and expiration from server memory
-    const currentServerTime = Date.now();
-    const metadata = expirationMetadata.get(id);
-
-    if (metadata) {
-      // Verify token matches
-      if (metadata.token !== token) {
-        return res.status(403).send('Invalid or expired token');
-      }
-
-      // Verify expiration (server time check)
-      if (currentServerTime >= metadata.expiresAt) {
-        // Expired - clean up
-        expirationMetadata.delete(id);
-        if (metadata.filePath) {
-          try {
-            if (fs.existsSync(metadata.filePath)) {
-              fs.unlinkSync(metadata.filePath);
-            }
-          } catch (err) {
-            console.error('Error deleting expired file:', err);
-          }
-        }
-        return res.status(410).send('Print link has expired');
-      }
-    }
-
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) return res.status(404).send('Job not found');
-    if (!token || token !== job.secureToken) return res.status(403).send('Invalid token');
-
-    // Fetch and decrypt document
-    let fileBuffer = null;
-    let mimeType = 'application/octet-stream';
-    let filename = job.documentName || 'document';
-
-    // Check 1: Document in database
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
-    if (document && document.content && document.content.length > 0) {
-      fileBuffer = document.content;
-      mimeType = document.mimeType || mimeType;
-      filename = document.filename || filename;
-
-      // Check if document is encrypted
-      if (document.encryptionMetadata) {
-        try {
-          const encryptionMeta = JSON.parse(document.encryptionMetadata);
-          const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
-
-          // Decrypt the file content
-          const secret = encryptionMeta.secret || `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
-          const iv = encryptionMeta.iv || [];
-          const authTag = encryptionMeta.authTag || [];
-
-          if (iv && Array.isArray(iv) && iv.length > 0 && authTag && Array.isArray(authTag) && authTag.length > 0) {
-            const decryptedBuffer = decryptFileForViewing(fileBuffer, iv, authTag, secret);
-            fileBuffer = decryptedBuffer;
-            console.log(`[Content] Decrypted document for job ${id}`);
-          } else {
-            console.warn(`[Content] Missing or invalid encryption metadata for job ${id}, serving as-is`);
-          }
-        } catch (decryptErr) {
-          console.error('[Content] Decryption error:', decryptErr);
-          return res.status(500).send('Unable to process document. Please contact administrator.');
-        }
+    if (document) {
+      const base64 = document.content.toString('base64');
+      job.document = {
+        dataUrl: `data:${document.mimeType};base64,${base64}`,
+        mimeType: document.mimeType,
+        name: document.filename,
+        size: document.size
+      };
+      
+      // Fetch analysis
+      const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
+      if (analysis) {
+        job.analysis = JSON.parse(analysis.result);
+      }
+    } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
+      // Fallback to filesystem if not in DB (for older jobs or if DB storage failed)
+      try {
+        const fileBuffer = fs.readFileSync(metadata.filePath);
+        const base64 = fileBuffer.toString('base64');
+        const dataUrl = `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`;
+        
+        job.document = {
+          dataUrl,
+          mimeType: metadata.mimetype,
+          name: metadata.originalname || job.documentName
+        };
+      } catch (err) {
+        console.error('Error reading file for job:', id, err);
       }
     }
-    // Check 2: Fallback to filesystem
-    else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
-      const fileStats = fs.statSync(metadata.filePath);
-      if (fileStats.size > 0) {
-        fileBuffer = fs.readFileSync(metadata.filePath);
-        mimeType = metadata.mimetype || mimeType;
-        filename = metadata.originalname || filename;
-
-        // Check if file is encrypted by extension
-        if (filename.includes('.enc.')) {
-          try {
-            const { decryptFileForViewing } = await import('../utils/aesCrypto.js');
-            const secret = `${id}_${job.userId}_${new Date(job.submittedAt).getTime()}`;
-            console.warn(`[Content] Encrypted file ${filename} from filesystem - metadata may be incomplete`);
-            // Note: Filesystem files might fail if metadata isn't stored elsewhere.
-          } catch (decryptErr) {
-            console.error('[Content] File decryption error:', decryptErr);
-          }
-        }
-      }
-    }
-
-    // Validate we have content
-    if (!fileBuffer || fileBuffer.length === 0) {
-      console.warn(`[Content] No document content found for job ${id}`);
-      return res.status(404).send('Document content not available');
-    }
-
-    // Set proper headers for browser viewing
-    res.setHeader('Content-Type', mimeType);
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-    res.setHeader('Content-Length', fileBuffer.length);
-
-    // Stream the decrypted content
-    res.send(fileBuffer);
-    console.log(`[Content] Served ${mimeType} document for job ${id} (${fileBuffer.length} bytes)`);
-
-  } catch (error) {
-    console.error("RELEASE CONTENT ERROR:", error);
-    if (!res.headersSent) {
-      res.status(500).send("Content streaming function crashed: " + error.message);
-    }
-  } finally {
-    activeOperations.delete(id);
+  } catch (err) {
+    console.error('Error fetching document/analysis from DB:', err);
   }
+
+  res.json({ job });
 });
 
-// View job document (multiple views allowed) - with server-side decryption
-router.post('/:id/view', async (req, res) => {
+// View job document (single-use only)
+router.post('/:id/view', (req, res) => {
   const db = req.db;
   const { id } = req.params;
   const { token, userId } = req.body || {};
-
+  
   activeOperations.add(id); // Lock job during view confirmation
-
+  
   try {
     // Validate token and expiration from server memory
     const currentServerTime = Date.now();
     const metadata = expirationMetadata.get(id);
-
-    if (metadata) {
-      if (metadata.token !== token) {
-        return res.status(403).json({ errorCode: 'INVALID_TOKEN', error: 'Invalid token' });
-      }
-
-      if (currentServerTime >= metadata.expiresAt) {
-        expirationMetadata.delete(id);
-        if (metadata.filePath) {
-          try {
-            if (fs.existsSync(metadata.filePath)) fs.unlinkSync(metadata.filePath);
-          } catch (err) { console.error('Error deleting expired file:', err); }
-        }
-        return res.status(410).json({ errorCode: 'LINK_EXPIRED', error: 'Print link has expired' });
-      }
-    }
-
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) return res.status(404).json({ errorCode: 'JOB_NOT_FOUND', error: 'Job not found' });
-    if (!token || token !== job.secureToken) return res.status(403).json({ errorCode: 'INVALID_TOKEN', error: 'Invalid token' });
-
-    // Document existence validation
-    let documentData = null;
-    let documentError = null;
-
-    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
-    if (document) {
-      if (document.content && document.content.length > 0) {
-        documentData = {
-          mimeType: document.mimeType,
-          name: document.filename,
-          size: document.size
-        };
-      } else {
-        documentError = 'Document content is empty';
-      }
-    } else if (metadata?.filePath) {
-      if (fs.existsSync(metadata.filePath)) {
-        try {
-          const fileStats = fs.statSync(metadata.filePath);
-          if (fileStats.size > 0) {
-            documentData = {
-              mimeType: metadata.mimetype,
-              name: metadata.originalname,
-              size: fileStats.size
-            };
-          } else {
-            documentError = 'Document file is empty';
-          }
-        } catch (err) {
-          documentError = 'Failed to read document file';
-        }
-      } else {
-        documentError = 'Document file not found';
-      }
-    } else {
-      documentError = 'Document not found';
-    }
-
-    if (!documentData) {
-      return res.status(404).json({
-        errorCode: 'DOCUMENT_NOT_FOUND',
-        error: documentError || 'Document content not available for preview'
-      });
-    }
-
-    // Record the view
-    const now = new Date().toISOString();
-    const viewId = nanoid();
-    db.prepare(`INSERT INTO job_views (id, jobId, userId, viewedAt, userAgent, ipAddress) 
-      VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(viewId, id, userId || 'anonymous', now, req.headers['user-agent'] || '', req.ip || '');
-
-    res.json({
-      success: true,
-      document: documentData,
-      viewCount: job.viewCount,
-      message: 'Document preview opened.'
-    });
-
-  } catch (error) {
-    console.error("VIEW JOB ERROR:", error);
-    if (!res.headersSent) {
-      res.status(500).json({
-        errorCode: 'INTERNAL_ERROR',
-        message: "View function crashed",
-        error: error.message
-      });
-    }
-  } finally {
-    activeOperations.delete(id);
-  }
-});
-
-// Release job (requires token) - only possible AFTER viewing
-router.post('/:id/release', (req, res) => {
-  const db = req.db;
-  const { id } = req.params;
-  const { token, printerId, releasedBy } = req.body || {};
-
-  activeOperations.add(id); // Lock job during release operation
-
-  try {
-    // Validate token and expiration from server memory
-    const currentServerTime = Date.now();
-    const metadata = expirationMetadata.get(id);
-
+    
     if (metadata) {
       // Verify token matches
       if (metadata.token !== token) {
         return res.status(403).json({ error: 'Invalid token' });
       }
-
+      
       // Verify expiration (server time check)
       if (currentServerTime >= metadata.expiresAt) {
         // Expired - clean up
@@ -640,22 +314,135 @@ router.post('/:id/release', (req, res) => {
         return res.status(410).json({ error: 'Print link has expired' });
       }
     }
-
+    
     const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
+    
+    // SINGLE-USE ENFORCEMENT: Check if already viewed
+    if (job.viewCount > 0) {
+      return res.status(403).json({ 
+        error: 'Document already viewed (one-time only)',
+        alreadyViewed: true,
+        viewCount: job.viewCount
+      });
+    }
 
+    // Record the view
+    const now = new Date().toISOString();
+    const viewId = nanoid();
+    
+    // Update job view count and timestamps
+    db.prepare('UPDATE jobs SET viewCount = viewCount + 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
+      .run(now, now, id);
+    
+    // Log the view for audit trail
+    db.prepare(`INSERT INTO job_views (id, jobId, userId, viewedAt, userAgent, ipAddress) 
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(
+        viewId, 
+        id, 
+        userId || 'anonymous', 
+        now, 
+        req.headers['user-agent'] || '', 
+        req.ip || req.connection.remoteAddress || ''
+      );
+
+    // Update in-memory metadata
+    if (metadata) {
+      metadata.viewCount = 1;
+      metadata.firstViewedAt = now;
+      expirationMetadata.set(id, metadata);
+      console.log(`[View] Job ${id} viewed for the first time by user ${userId}`);
+    }
+
+    // Return document data for preview (NOT download)
+    let documentData = null;
+    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
+    if (document) {
+      const base64 = document.content.toString('base64');
+      documentData = {
+        dataUrl: `data:${document.mimeType};base64,${base64}`,
+        mimeType: document.mimeType,
+        name: document.filename,
+        size: document.size
+      };
+    } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
+      const fileBuffer = fs.readFileSync(metadata.filePath);
+      const base64 = fileBuffer.toString('base64');
+      documentData = {
+        dataUrl: `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`,
+        mimeType: metadata.mimetype,
+        name: metadata.originalname || job.documentName
+      };
+    }
+
+    res.json({ 
+      success: true, 
+      document: documentData,
+      viewCount: 1,
+      firstViewedAt: now,
+      message: 'Document preview opened. This was a one-time view - the button is now permanently disabled.'
+    });
+  } catch (err) {
+    console.error('Error during job view:', err);
+    res.status(500).json({ error: 'Failed to open document preview' });
+  } finally {
+    activeOperations.delete(id);
+  }
+});
+
+// Release job (requires token) - only possible AFTER viewing
+router.post('/:id/release', (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+  const { token, printerId, releasedBy } = req.body || {};
+  
+  activeOperations.add(id); // Lock job during release operation
+  
+  try {
+    // Validate token and expiration from server memory
+    const currentServerTime = Date.now();
+    const metadata = expirationMetadata.get(id);
+    
+    if (metadata) {
+      // Verify token matches
+      if (metadata.token !== token) {
+        return res.status(403).json({ error: 'Invalid token' });
+      }
+      
+      // Verify expiration (server time check)
+      if (currentServerTime >= metadata.expiresAt) {
+        // Expired - clean up
+        expirationMetadata.delete(id);
+        if (metadata.filePath) {
+          try {
+            if (fs.existsSync(metadata.filePath)) {
+              fs.unlinkSync(metadata.filePath);
+            }
+          } catch (err) {
+            console.error('Error deleting expired file:', err);
+          }
+        }
+        return res.status(410).json({ error: 'Print link has expired' });
+      }
+    }
+    
+    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
+    
     // REJECTION: Already released jobs
     if (job.status === 'released') {
       return res.status(409).json({ error: 'Print job has already been released' });
     }
-
-    // Check if job has expired
-    if (job.status === 'pending' && job.viewCount > 0) {
-      // Job has been viewed - check expiration
-      if (job.expiresAt && new Date(job.expiresAt) < new Date()) {
-        return res.status(403).json({ error: 'Print link has expired' });
-      }
+    
+    // Check if job has been viewed (single-use view must occur before release)
+    if (job.viewCount === 0) {
+      return res.status(403).json({ 
+        error: 'Document must be viewed before releasing. Click the view button first.',
+        requiresView: true
+      });
     }
 
     // Update job status to released and track release metadata
@@ -680,18 +467,14 @@ router.post('/:id/release', (req, res) => {
       });
     }
 
-    res.json({
-      success: true,
+    res.json({ 
+      success: true, 
       message: 'Print job released successfully!',
       status: 'released'
     });
-  } catch (error) {
-    console.error("RELEASE ERROR:", error);
-    res.status(500).json({
-      errorCode: 'INTERNAL_ERROR',
-      message: "Release function crashed",
-      error: error.message
-    });
+  } catch (err) {
+    console.error('Error during job release:', err);
+    res.status(500).json({ error: 'Failed to release print job' });
   } finally {
     activeOperations.delete(id);
   }
@@ -701,20 +484,20 @@ router.post('/:id/release', (req, res) => {
 router.post('/:id/complete', (req, res) => {
   const db = req.db;
   const { id } = req.params;
-
+  
   const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
   if (!job) return res.status(404).json({ error: 'Job not found' });
-
+  
   // Can only complete released jobs
   if (job.status !== 'released') {
     return res.status(400).json({ error: 'Job must be released before marking as completed' });
   }
-
+  
   db.prepare('UPDATE jobs SET status = ?, completedAt = ? WHERE id = ?')
     .run('completed', new Date().toISOString(), id);
 
   console.log(`[Complete] Job ${id} marked as completed`);
-
+  
   res.json({ success: true, message: 'Job marked as completed' });
 });
 
@@ -722,17 +505,17 @@ router.post('/:id/complete', (req, res) => {
 router.get('/', (req, res) => {
   const db = req.db;
   const { userId } = req.query;
-
+  
   let query = 'SELECT * FROM jobs';
   let params = [];
-
+  
   if (userId) {
     query += ' WHERE userId = ?';
     params.push(userId);
   }
-
+  
   query += ' ORDER BY submittedAt DESC';
-
+  
   const jobs = db.prepare(query).all(params);
   res.json({ jobs });
 });
@@ -741,17 +524,17 @@ router.get('/', (req, res) => {
 router.get('/cleanup/expired', (req, res) => {
   const currentServerTime = Date.now();
   const expired = [];
-
+  
   expirationMetadata.forEach((metadata, jobId) => {
     if (currentServerTime >= metadata.expiresAt) {
       expired.push({
         id: jobId,
         expiredAt: metadata.expiresAt,
-        originalToken: metadata.token.substring(0, 8) + '...'
+        originalToken: metadata.token.substring(0, 8) + '...' 
       });
     }
   });
-
+  
   res.json({ expired });
 });
 

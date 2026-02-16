@@ -4,9 +4,9 @@ import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 import { usePrintJob } from '../context/PrintJobContext';
 import { QRCodeCanvas } from 'qrcode.react';
-import {
-  FaQrcode,
-  FaKey,
+import { 
+  FaQrcode, 
+  FaKey, 
   FaPrint,
   FaEye,
   FaChartBar
@@ -17,15 +17,6 @@ const ReleaseContainer = styled.div`
   padding: 20px;
   max-width: 1000px;
   margin: 0 auto;
-  
-  @media (max-width: 768px) {
-    padding: 15px;
-    max-width: 100%;
-  }
-  
-  @media (max-width: 480px) {
-    padding: 10px;
-  }
 `;
 
 const PageHeader = styled.div`
@@ -42,28 +33,6 @@ const PageHeader = styled.div`
   p {
     color: #7f8c8d;
     font-size: 16px;
-  }
-  
-  @media (max-width: 768px) {
-    margin-bottom: 20px;
-    
-    h1 {
-      font-size: 24px;
-    }
-    
-    p {
-      font-size: 14px;
-    }
-  }
-  
-  @media (max-width: 480px) {
-    h1 {
-      font-size: 20px;
-    }
-    
-    p {
-      font-size: 13px;
-    }
   }
 `;
 
@@ -84,16 +53,6 @@ const PrinterInterface = styled.div`
     right: 0;
     height: 4px;
     background: linear-gradient(90deg, #3498db, #2ecc71, #f39c12, #e74c3c);
-  }
-  
-  @media (max-width: 768px) {
-    padding: 30px 20px;
-    border-radius: 15px;
-  }
-  
-  @media (max-width: 480px) {
-    padding: 25px 15px;
-    border-radius: 12px;
   }
 `;
 
@@ -129,34 +88,6 @@ const PrinterHeader = styled.div`
     50% { opacity: 0.5; }
     100% { opacity: 1; }
   }
-  
-  @media (max-width: 768px) {
-    margin-bottom: 20px;
-    
-    .printer-name {
-      font-size: 20px;
-    }
-    
-    .printer-status {
-      font-size: 13px;
-    }
-  }
-  
-  @media (max-width: 480px) {
-    .printer-name {
-      font-size: 18px;
-    }
-    
-    .printer-status {
-      font-size: 12px;
-      gap: 6px;
-    }
-    
-    .status-dot {
-      width: 6px;
-      height: 6px;
-    }
-  }
 `;
 
 const AuthSection = styled.div`
@@ -167,12 +98,6 @@ const AuthSection = styled.div`
   
   @media (max-width: 768px) {
     grid-template-columns: 1fr;
-    gap: 20px;
-    margin-bottom: 20px;
-  }
-  
-  @media (max-width: 480px) {
-    gap: 15px;
   }
 `;
 
@@ -212,40 +137,6 @@ const AuthMethod = styled.div`
     opacity: 0.8;
     line-height: 1.4;
   }
-  
-  @media (max-width: 768px) {
-    padding: 20px;
-    
-    .auth-icon {
-      font-size: 40px;
-      margin-bottom: 12px;
-    }
-    
-    .auth-title {
-      font-size: 16px;
-      margin-bottom: 6px;
-    }
-    
-    .auth-description {
-      font-size: 13px;
-    }
-  }
-  
-  @media (max-width: 480px) {
-    padding: 16px;
-    
-    .auth-icon {
-      font-size: 36px;
-    }
-    
-    .auth-title {
-      font-size: 15px;
-    }
-    
-    .auth-description {
-      font-size: 12px;
-    }
-  }
 `;
 
 const PinInput = styled.div`
@@ -274,29 +165,6 @@ const PinInput = styled.div`
     
     &::placeholder {
       color: rgba(255, 255, 255, 0.5);
-    }
-  }
-  
-  @media (max-width: 768px) {
-    gap: 10px;
-    margin: 15px 0;
-    
-    input {
-      width: 50px;
-      height: 50px;
-      font-size: 20px;
-    }
-  }
-  
-  @media (max-width: 480px) {
-    gap: 8px;
-    margin: 12px 0;
-    
-    input {
-      width: 45px;
-      height: 45px;
-      font-size: 18px;
-      border-radius: 10px;
     }
   }
 `;
@@ -513,11 +381,16 @@ const PrintRelease = () => {
   const [loading, setLoading] = useState(false);
   const [linkTargetJobId, setLinkTargetJobId] = useState(null);
   const [autoPrintDone, setAutoPrintDone] = useState(false);
+  const [printedViaIframe, setPrintedViaIframe] = useState(false);
   const [serverJob, setServerJob] = useState(null);
-
+  
   // SECURITY: Multi-use support - track releases per session, NOT globally
+  // - releasingRef prevents duplicate calls during same render cycle (React StrictMode)
+  // - releasedInSession tracks successful releases to avoid redundant API calls
+  // - Does NOT prevent multiple releases across page refreshes (by design)
   const releasingRef = React.useRef(false); // Prevent concurrent release attempts
   const releasedInSession = React.useRef(false); // Track if already released in current session
+  const [cachedDocument, setCachedDocument] = useState(null); // Cache document in browser memory
 
   useEffect(() => {
     // Validate token and expiration (server-side or client-side)
@@ -525,29 +398,22 @@ const PrintRelease = () => {
     const search = new URLSearchParams(location.search);
     const token = search.get('token');
     if (!jobId || !token) return;
-
+    
     // Try server API validation first (permanent fix)
     const validateFromServer = async () => {
       try {
         const { api } = await import('../api/client');
         const response = await api.get(`/api/jobs/${jobId}?token=${token}`);
-
-        // Handle success response
         if (response.data.job) {
           setServerJob(response.data.job);
           setLinkTargetJobId(jobId);
-        }
-        // Handle explicit errors from backend
-        else if (response.data.errorCode) {
-          // Handle other errors
-          const errorMsg = response.data.error || 'Unknown error';
-          if (errorMsg.includes('expired')) {
-            toast.info('This print link has expired', { autoClose: 5000 });
+          // Cache document in browser memory for multi-use
+          if (response.data.job.document) {
+            setCachedDocument(response.data.job.document);
           }
-          return;
         }
       } catch (apiError) {
-        // Handle network/API errors
+        // Check if this is an expiration error (expected behavior)
         if (apiError.response?.status === 403) {
           const errorMsg = apiError.response.data?.error || '';
           if (errorMsg.includes('expired')) {
@@ -557,12 +423,7 @@ const PrintRelease = () => {
           }
           return;
         }
-
-        if (apiError.response?.status === 404) {
-          toast.error('Print job not found');
-          return;
-        }
-
+        
         // API not available - use client-side validation (fallback)
         if (validateTokenAndExpiration) {
           const validation = validateTokenAndExpiration(jobId, token);
@@ -576,8 +437,7 @@ const PrintRelease = () => {
             return;
           }
         }
-
-        // Fallback to client-side job lookup
+        
         const job = printJobs.find(j => j.id === jobId && j.secureToken === token);
         if (job) {
           if (job.expiresAt && new Date(job.expiresAt) < new Date()) {
@@ -585,12 +445,14 @@ const PrintRelease = () => {
             return;
           }
           setLinkTargetJobId(jobId);
-        } else {
-          toast.error('Print job not found');
+          // Cache document for multi-use
+          if (job.document) {
+            setCachedDocument(job.document);
+          }
         }
       }
     };
-
+    
     validateFromServer();
   }, [params.jobId, location.search, printJobs, validateTokenAndExpiration]);
 
@@ -599,47 +461,163 @@ const PrintRelease = () => {
     if (!autoPrintDone) return;
 
     const jobId = params.jobId;
-    const token = new URLSearchParams(location.search).get('token');
+    // Use cached document first, fallback to job document
+    const documentData = cachedDocument || serverJob?.document || printJobs.find(j => j.id === jobId)?.document;
 
-    // Safety check - need job and token
-    if (!jobId || !token) return;
+    // If we have a stored document, load and print it via an iframe
+    if (documentData?.dataUrl && !printedViaIframe) {
+      console.log('Attempting to print document:', { mimeType: documentData.mimeType, name: documentData.name });
+      const { dataUrl, mimeType } = documentData || {};
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      document.body.appendChild(iframe);
 
-    // Use invisible iframe to print from server endpoint
-    console.log('Auto-printing document via server endpoint');
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.right = '0';
-    iframe.style.bottom = '0';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
-    iframe.style.border = '0';
-    document.body.appendChild(iframe);
-
-    // Set source to server content endpoint
-    iframe.src = `/api/jobs/${jobId}/content?token=${encodeURIComponent(token)}`;
-
-    iframe.onload = () => {
-      setTimeout(() => {
+      const printIframe = () => {
         try {
-          if (iframe.contentWindow) {
-            iframe.contentWindow.focus();
-            iframe.contentWindow.print();
+          if (!iframe.contentWindow) {
+            throw new Error('Iframe content window not accessible');
           }
+          iframe.contentWindow.focus();
+          iframe.contentWindow.print();
+          setPrintedViaIframe(true);
         } catch (error) {
-          console.error('Auto-print failed:', error);
-        } finally {
-          // Cleanup
-          setTimeout(() => {
-            if (document.body.contains(iframe)) {
-              document.body.removeChild(iframe);
+          console.error('Iframe print failed:', error);
+          
+          // Fallback: Open in new window/tab to guarantee printing works
+          try {
+            console.log('Falling back to new window print...');
+            toast.info('Opening document in new window for printing...');
+            
+            // Create a blob URL instead of data URL for better browser compatibility
+            let urlToOpen = dataUrl;
+            try {
+              if (dataUrl.startsWith('data:')) {
+                const arr = dataUrl.split(',');
+                const mime = arr[0].match(/:(.*?);/)[1];
+                const bstr = atob(arr[1]);
+                let n = bstr.length;
+                const u8arr = new Uint8Array(n);
+                while(n--) {
+                  u8arr[n] = bstr.charCodeAt(n);
+                }
+                const blob = new Blob([u8arr], {type: mime});
+                urlToOpen = URL.createObjectURL(blob);
+              }
+            } catch (e) {
+              console.warn('Failed to create blob URL, using data URL', e);
             }
-          }, 5000);
-        }
-      }, 1000);
-    };
 
-    // No error toast here - if it fails, user can click Print manually
-  }, [autoPrintDone, params.jobId, location.search]);
+            const printWindow = window.open(urlToOpen, '_blank');
+            if (printWindow) {
+              printWindow.focus();
+              printWindow.onload = () => {
+                setTimeout(() => {
+                  printWindow.print();
+                  setPrintedViaIframe(true);
+                  // Clean up blob URL if used
+                  if (urlToOpen !== dataUrl) {
+                    URL.revokeObjectURL(urlToOpen);
+                  }
+                }, 1000);
+              };
+            } else {
+              throw new Error('Popup blocked');
+            }
+          } catch (fallbackError) {
+            console.error('Fallback print failed:', fallbackError);
+            toast.error('Failed to print automatically. Please click the Print button or try downloading.');
+          }
+        }
+      };
+
+      const fileName = (documentData?.name || '').toLowerCase();
+      // Check both MIME type and file extension for better detection
+      const isPdf = (mimeType || '').includes('pdf') || fileName.endsWith('.pdf');
+      const isImage = (mimeType || '').startsWith('image/') || /\.(jpg|jpeg|png|gif|bmp|webp|svg)$/.test(fileName);
+      const isText = (mimeType || '').includes('text/') || (mimeType || '') === 'text/plain' || /\.(txt|csv)$/.test(fileName);
+      const isWord = /msword|wordprocessingml/.test(mimeType || '') || /\.(doc|docx)$/.test(fileName);
+      const isExcel = /excel|spreadsheetml/.test(mimeType || '') || /\.(xls|xlsx)$/.test(fileName);
+      const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '') || /\.(ppt|pptx)$/.test(fileName);
+      const isOffice = isWord || isExcel || isPowerPoint || /officedocument/.test(mimeType || '');
+
+      if (isPdf) {
+        iframe.src = dataUrl;
+        // Increase timeout to allow PDF viewer to fully initialize
+        iframe.onload = () => setTimeout(printIframe, 100000);
+      } else if (isImage) {
+        const doc = iframe.contentWindow?.document;
+        if (doc) {
+          doc.open();
+          doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8" /><style>html,body{margin:0;padding:0;height:100%}img{display:block;max-width:100%;max-height:100%;margin:auto}</style></head><body><img src="${dataUrl}" /></body></html>`);
+          doc.close();
+          setTimeout(printIframe, 200000);
+        } else {
+          window.open(dataUrl, '_blank');
+        }
+      } else if (isText) {
+        const doc = iframe.contentWindow?.document;
+        if (doc) {
+          // Decode base64 payload if present in data URL
+          let textContent = '';
+          try {
+            const base64 = dataUrl.split(',')[1] || '';
+            textContent = atob(base64);
+          } catch (_) {}
+          doc.open();
+          doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8" /></head><body><pre>${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre></body></html>`);
+          doc.close();
+          setTimeout(printIframe, 200);
+        } else {
+          window.open(dataUrl, '_blank');
+        }
+      } else if (isOffice) {
+        // Office documents (Word, Excel, PowerPoint) - try to use Office Online Viewer or download
+        const officeType = isWord ? 'Word' : isExcel ? 'Excel' : 'PowerPoint';
+        toast.info(`${officeType} documents open in a new window. Use your browser's print function.`);
+        window.open(dataUrl, '_blank');
+      } else if (isText) {
+        // Additional text formats (CSV, etc.)
+        const doc = iframe.contentWindow?.document;
+        if (doc) {
+          let textContent = '';
+          try {
+            const base64 = dataUrl.split(',')[1] || '';
+            textContent = atob(base64);
+          } catch (_) {}
+          doc.open();
+          doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8" /></head><body><pre style="padding:20px;font-family:monospace;">${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre></body></html>`);
+          doc.close();
+          setTimeout(printIframe, 200);
+        } else {
+          window.open(dataUrl, '_blank');
+        }
+      } else {
+        // Unknown type: open in a new tab so the browser/plugin can handle it
+        window.open(dataUrl, '_blank');
+      }
+
+      return () => {
+        iframe.onload = null;
+        document.body.removeChild(iframe);
+      };
+    }
+
+    // If no embedded document is available, fallback to printing the page
+    // const id = setTimeout(() => {
+    //   try { window.print(); } catch (_) {}
+    // }, 300);
+    // return () => clearTimeout(id);
+
+    if (!documentData?.dataUrl && !printedViaIframe) {
+      console.warn('Document content not found, cannot auto-print.');
+      toast.error('Document content not available for printing. Please try downloading it instead.');
+    }
+  }, [autoPrintDone, printedViaIframe, params.jobId, printJobs, serverJob, cachedDocument]);
 
   // Auto-authenticate and release if valid token and jobId are present
   // SECURITY: Multi-use design - can be called multiple times (page refresh)
@@ -650,28 +628,29 @@ const PrintRelease = () => {
     const jobId = params.jobId;
     const search = new URLSearchParams(location.search);
     const token = search.get('token');
-
+    
     // Skip if: no job/token, already releasing, or already released in this session
     if (!jobId || !token || releasingRef.current || releasedInSession.current) return;
-
+    
     // Use cached document or fetch from server/printJobs
+    const documentData = cachedDocument || serverJob?.document;
     const job = serverJob || printJobs.find(j => j.id === jobId && j.secureToken === token);
     if (!job) return;
-
+    
     // Find the user for this job
     const user = mockUsers.find(u => String(u.id) === String(job.userId));
     if (!user) return;
-
+    
     // Find the first available online printer
     const printer = printers.find(p => p.status === 'online');
     if (!printer) return;
-
+    
     // Mark as releasing to prevent duplicate calls (React StrictMode)
     releasingRef.current = true;
     setAuthenticatedUser(user);
     setSelectedPrinter(printer);
     setLoading(true);
-
+    
     // Release the job automatically
     releasePrintJob(jobId, printer.id, user.id, token)
       .then(() => {
@@ -681,8 +660,11 @@ const PrintRelease = () => {
           autoClose: 5000
         });
         setAutoPrintDone(true);
-
-
+        
+        // Cache document for future prints in this session
+        if (documentData && !cachedDocument) {
+          setCachedDocument(documentData);
+        }
       })
       .catch((err) => {
         // Check if error is due to expiration (expected behavior)
@@ -702,57 +684,45 @@ const PrintRelease = () => {
         releasingRef.current = false;
       })
       .finally(() => setLoading(false));
-  }, [params.jobId, location.search, printJobs, printers, mockUsers, releasePrintJob, serverJob]);
+  }, [params.jobId, location.search, printJobs, printers, mockUsers, releasePrintJob, serverJob, cachedDocument]);
 
-  const userJobs = authenticatedUser
+  const userJobs = authenticatedUser 
     ? [
-      // Include serverJob if it matches user (ignore status for multi-use)
-      ...(serverJob && serverJob.userId === authenticatedUser.id ? [serverJob] : []),
-      // Include printJobs that match user (ignore status for multi-use)
-      ...printJobs.filter(job => job.userId === authenticatedUser.id && job.id !== serverJob?.id)
-    ]
+        // Include serverJob if it matches user (ignore status for multi-use)
+        ...(serverJob && serverJob.userId === authenticatedUser.id ? [serverJob] : []),
+        // Include printJobs that match user (ignore status for multi-use)
+        ...printJobs.filter(job => job.userId === authenticatedUser.id && job.id !== serverJob?.id)
+      ]
     : [];
 
   const jobsToShow = linkTargetJobId
     ? userJobs.filter(j => j.id === linkTargetJobId)
     : userJobs;
 
-  // Helper functions for button states
-  const isJobWithinTimeLimit = (job) => {
-    if (!job.expiresAt) return true;
-    return new Date(job.expiresAt) > new Date();
-  };
-
-  const isJobValidForPrinting = (job) => {
-    // Only check time limit - content is fetched from server on-demand
-    return isJobWithinTimeLimit(job);
-  };
-
-  const getPrintButtonTitle = (job) => {
-    if (!isJobWithinTimeLimit(job)) {
-      return 'Print link has expired';
+  // BUGFIX: Ensure document data is available for display
+  // If cachedDocument exists, attach it to jobs that don't have document data
+  const jobsWithDocuments = jobsToShow.map(job => {
+    // Priority 1: Job already has document
+    if (job.document?.dataUrl) {
+      return job;
     }
-    return 'Print Document';
-  };
-
-  const getReleaseButtonTitle = (job) => {
-    if (loading) return 'Releasing...';
-    if (!selectedPrinter) return 'Select a printer first';
-    if (job.viewCount === 0) return 'Must view document first';
-    if (!isJobWithinTimeLimit(job)) return 'Print link has expired';
-    return 'Release job to printer';
-  };
-
-  // Jobs are now simple pass-throughs
-  const jobsWithDocuments = jobsToShow;
+    // Priority 2: Use cached document if job IDs match
+    if (cachedDocument && (linkTargetJobId === job.id || jobsToShow.length === 1)) {
+      console.log(`Attaching cached document to job ${job.id}`);
+      return { ...job, document: cachedDocument };
+    }
+    // Priority 3: No document available
+    console.warn(`Job ${job.id} (${job.documentName}) has no document data`);
+    return job;
+  });
 
   const handlePinChange = (index, value) => {
     if (value.length > 1) return;
-
+    
     const newPin = [...pin];
     newPin[index] = value;
     setPin(newPin);
-
+    
     if (value && index < 3) {
       pinInputs[index + 1]?.focus();
     }
@@ -785,32 +755,16 @@ const PrintRelease = () => {
       return;
     }
 
-    // Find the job
-    const job = jobsWithDocuments.find(j => j.id === jobId);
-    if (!job) {
-      toast.error('Job not found');
-      return;
-    }
-
-    // Security: Check if within time limit
-    if (!isJobWithinTimeLimit(job)) {
-      toast.info('Print link has expired');
-      return;
-    }
-
-    // Check document availability before releasing
-    // With server-side decryption, we assume content is available if job exists
-    // The server will handle errors if content is missing during release
-
     setLoading(true);
     try {
       const token = new URLSearchParams(location.search).get('token');
       await releasePrintJob(jobId, selectedPrinter.id, authenticatedUser.id, token);
-      toast.success('Print job released successfully!');
-
-      // Cache document for future use if we have it
-      if (job?.document) {
-        // Document is handled server-side now
+      toast.success('Print job released successfully! You can release it again until the link expires.');
+      
+      // Cache document for future use
+      const job = serverJob || printJobs.find(j => j.id === jobId);
+      if (job?.document && !cachedDocument) {
+        setCachedDocument(job.document);
       }
     } catch (error) {
       const errorMsg = error.message || 'Failed to release print job';
@@ -833,42 +787,10 @@ const PrintRelease = () => {
     setLoading(true);
     try {
       const token = new URLSearchParams(location.search).get('token');
-      let successCount = 0;
-      let errorCount = 0;
-
       for (const job of jobsWithDocuments) {
-        // Check security constraints for each job
-        if (!isJobWithinTimeLimit(job)) {
-          errorCount++;
-          console.warn(`Skipping job ${job.id}: Link expired`);
-          continue;
-        }
-
-        // Check document availability
-        // With server-side decryption, we assume content is available if job exists
-
-        try {
-          await releasePrintJob(job.id, selectedPrinter.id, authenticatedUser.id, token);
-          successCount++;
-          // Cache document if we have it
-          if (job?.document) {
-            // Document is handled server-side now
-          }
-        } catch (error) {
-          errorCount++;
-          console.error(`Failed to release job ${job.id}:`, error.message);
-        }
+        await releasePrintJob(job.id, selectedPrinter.id, authenticatedUser.id, token);
       }
-
-      if (successCount > 0) {
-        const messages = [`Successfully released ${successCount} job(s)!`];
-        if (errorCount > 0) {
-          messages.push(`${errorCount} skipped.`);
-        }
-        toast.success(messages.join(' '));
-      } else if (errorCount > 0) {
-        toast.error('Could not release any jobs. Check that links are not expired.');
-      }
+      toast.success('All print jobs released successfully! You can release them again until the links expire.');
     } catch (error) {
       const errorMsg = error.message || 'Failed to release some print jobs';
       if (errorMsg.includes('expired')) {
@@ -890,109 +812,242 @@ const PrintRelease = () => {
     });
   };
 
-
-  const handleViewDocument = async (job) => {
-    // Security: Check if within time limit
-    if (!isJobWithinTimeLimit(job)) {
-      toast.info('Print link has expired');
-      return;
-    }
-
+  // Helper: Convert data URL to Blob URL to avoid browser size limits
+  const convertDataUrlToBlob = (dataUrl) => {
     try {
-      // Get the token from URL or job
-      const token = new URLSearchParams(location.search).get('token') || job.secureToken;
-
-      if (!token) {
-        toast.error('Missing authentication token');
-        return;
-      }
-
-      let contentUrl;
-
-      // Check if this is a local job (stored in localStorage)
-      if (job.id.startsWith('local_')) {
-        // For local jobs, use the dataUrl directly if available
-        if (job.document?.dataUrl) {
-          contentUrl = job.document.dataUrl;
-        } else if (job.document?.size && job.document.size > 2 * 1024 * 1024) {
-          toast.error('Large files (>2MB) cannot be printed in offline mode. Please submit when connected to server.');
-          return;
-        } else {
-          toast.error('Document data not available. Try refreshing the page or resubmit the job.');
-          return;
-        }
-      } else {
-        // For server jobs, fetch from API content endpoint
-        contentUrl = `/api/jobs/${job.id}/content?token=${encodeURIComponent(token)}`;
-      }
-
-      const viewWindow = window.open(contentUrl, '_blank');
-
-      if (!viewWindow) {
-        toast.error('Failed to open document. Please check your popup blocker.');
-        return;
-      }
-
-      toast.success('Opening document in new tab...');
-    } catch (error) {
-      console.error('Failed to view document:', error);
-      toast.error('Failed to open document for viewing');
-    }
-  };
-
-
-  const handlePrintDocument = async (job) => {
-    // Security: Check if within time limit
-    if (!isJobWithinTimeLimit(job)) {
-      toast.info('Print link has expired');
-      return;
-    }
-
-    try {
-      // Get the token from URL or job
-      const token = new URLSearchParams(location.search).get('token') || job.secureToken;
-
-      if (!token) {
-        toast.error('Missing authentication token');
-        return;
-      }
-
-      let contentUrl;
-
-      // Check if this is a local job (stored in localStorage)
-      if (job.id.startsWith('local_')) {
-        // For local jobs, use the dataUrl directly if available
-        if (job.document?.dataUrl) {
-          contentUrl = job.document.dataUrl;
-        } else if (job.document?.size && job.document.size > 2 * 1024 * 1024) {
-          toast.error('Large files (>2MB) cannot be printed in offline mode. Please submit when connected to server.');
-          return;
-        } else {
-          toast.error('Document data not available. Try refreshing the page or resubmit the job.');
-          return;
-        }
-      } else {
-        // For server jobs, fetch from API content endpoint
-        contentUrl = `/api/jobs/${job.id}/content?token=${encodeURIComponent(token)}`;
-      }
-
-      // Open document in new tab - browsers block print() from iframes
-      const printWindow = window.open(contentUrl, '_blank');
+      if (!dataUrl.startsWith('data:')) return dataUrl;
       
-      if (!printWindow) {
-        toast.error('Failed to open print window. Please check your popup blocker.');
-        return;
+      const arr = dataUrl.split(',');
+      const mime = arr[0].match(/:(.*?);/)[1];
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while(n--) {
+        u8arr[n] = bstr.charCodeAt(n);
       }
-
-      // Show instructions to user
-      toast.info('Document opened in new tab. Press Ctrl+P (or Cmd+P on Mac) to print.');
-
-    } catch (error) {
-      console.error('Failed to print document:', error);
-      toast.error('Failed to print document');
+      const blob = new Blob([u8arr], {type: mime});
+      return URL.createObjectURL(blob);
+    } catch (e) {
+      console.warn('Failed to create blob URL, using data URL fallback', e);
+      return dataUrl;
     }
   };
 
+  const handleViewDocument = (job) => {
+    // Use cached document first, fallback to job document
+    const documentData = cachedDocument || job?.document;
+    if (!documentData?.dataUrl) {
+      toast.warning('Document not available for preview');
+      return;
+    }
+
+    const { dataUrl, mimeType, name } = documentData;
+    const isPdf = (mimeType || '').includes('pdf');
+    const isImage = (mimeType || '').startsWith('image/');
+    const isText = (mimeType || '').includes('text/');
+    const isWord = /msword|wordprocessingml/.test(mimeType || '');
+    const isExcel = /excel|spreadsheetml/.test(mimeType || '');
+    const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
+    const isOffice = isWord || isExcel || isPowerPoint;
+
+    // For PDFs and images, open in a new window for viewing/printing
+    if (isPdf || isImage) {
+      if (isPdf) {
+        // Convert to blob URL for PDFs (avoids data URL size limits)
+        const blobUrl = convertDataUrlToBlob(dataUrl);
+        const printWindow = window.open(blobUrl, '_blank');
+        
+        // Cleanup blob URL after window loads
+        if (blobUrl !== dataUrl && printWindow) {
+          printWindow.addEventListener('load', () => {
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+          });
+        }
+      } else if (isImage) {
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>${name || 'Document'}</title>
+              <style>
+                body { margin: 0; padding: 20px; text-align: center; background: #f5f5f5; }
+                img { max-width: 100%; height: auto; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+              </style>
+            </head>
+            <body>
+              <img src="${dataUrl}" alt="${name || 'Document'}" />
+              <script>window.onload = function() { window.focus(); }</script>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+      }
+    } else if (isText) {
+      // For text files, open in a new window with formatted text
+      try {
+        const base64 = dataUrl.split(',')[1] || '';
+        const textContent = atob(base64);
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>${name || 'Document'}</title>
+              <style>
+                body { margin: 0; padding: 20px; font-family: monospace; background: white; }
+                pre { white-space: pre-wrap; word-wrap: break-word; }
+              </style>
+            </head>
+            <body>
+              <pre>${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+      } catch (err) {
+        window.open(dataUrl, '_blank');
+      }
+    } else if (isOffice) {
+      // For Office documents, open for download/viewing
+      const officeType = isWord ? 'Word' : isExcel ? 'Excel' : 'PowerPoint';
+      toast.info(`Opening ${officeType} document. Use File > Print in your application to print.`);
+      
+      // Create a download link
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = name || 'document';
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      // For other formats, try to open directly
+      // Use blob URL for safety (handles large files)
+      const blobUrl = convertDataUrlToBlob(dataUrl);
+      const printWindow = window.open(blobUrl, '_blank');
+      
+      // Cleanup blob URL after window loads
+      if (blobUrl !== dataUrl && printWindow) {
+        printWindow.addEventListener('load', () => {
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        });
+      }
+    }
+  };
+
+  const handlePrintDocument = (job) => {
+    // Use cached document first, fallback to job document
+    const documentData = cachedDocument || job?.document;
+    if (!documentData?.dataUrl) {
+      toast.warning('Document not available for printing');
+      return;
+    }
+
+    const { dataUrl, mimeType, name } = documentData;
+    const isPdf = (mimeType || '').includes('pdf');
+    const isImage = (mimeType || '').startsWith('image/');
+    const isText = (mimeType || '').includes('text/');
+    const isWord = /msword|wordprocessingml/.test(mimeType || '');
+    const isExcel = /excel|spreadsheetml/.test(mimeType || '');
+    const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
+    const isOffice = isWord || isExcel || isPowerPoint;
+
+    // For PDFs, open and print
+    if (isPdf) {
+      // Convert to blob URL for PDFs (avoids data URL size limits)
+      const blobUrl = convertDataUrlToBlob(dataUrl);
+      const printWindow = window.open(blobUrl, '_blank');
+      
+      if (printWindow) {
+        printWindow.addEventListener('load', () => {
+          setTimeout(() => {
+            printWindow.print();
+            // Cleanup blob URL after print dialog closes
+            if (blobUrl !== dataUrl) {
+              setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+            }
+          }, 1000);
+        });
+      }
+    } else if (isImage) {
+      // For images, open in a new window and print
+      const printWindow = window.open('', '_blank');
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>${name || 'Document'}</title>
+            <style>
+              body { margin: 0; padding: 20px; text-align: center; }
+              img { max-width: 100%; height: auto; }
+              @media print { body { padding: 0; } }
+            </style>
+          </head>
+          <body>
+            <img src="${dataUrl}" alt="${name || 'Document'}" />
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.addEventListener('load', () => {
+        setTimeout(() => printWindow.print(), 500);
+      });
+    } else if (isText) {
+      // For text files, open and print
+      try {
+        const base64 = dataUrl.split(',')[1] || '';
+        const textContent = atob(base64);
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>${name || 'Document'}</title>
+              <style>
+                body { margin: 0; padding: 20px; font-family: monospace; }
+                pre { white-space: pre-wrap; word-wrap: break-word; }
+              </style>
+            </head>
+            <body>
+              <pre>${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+        printWindow.addEventListener('load', () => {
+          setTimeout(() => printWindow.print(), 500);
+        });
+      } catch (err) {
+        toast.error('Unable to print text document');
+      }
+    } else if (isOffice) {
+      // For Office documents, download and inform user
+      toast.info('Office documents need to be opened in their native application to print. Downloading file...');
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = name || 'document';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      // For other formats, try to open and print
+      // Use blob URL for safety (handles large files)
+      const blobUrl = convertDataUrlToBlob(dataUrl);
+      const printWindow = window.open(blobUrl, '_blank');
+      if (printWindow) {
+        printWindow.addEventListener('load', () => {
+          setTimeout(() => {
+            printWindow.print();
+            // Cleanup blob URL
+            if (blobUrl !== dataUrl) {
+              setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+            }
+          }, 1000);
+        });
+      }
+    }
+  };
 
   const getInitials = (name) => {
     return name
@@ -1022,7 +1077,7 @@ const PrintRelease = () => {
         {!authenticatedUser ? (
           <>
             <AuthSection>
-              <AuthMethod
+              <AuthMethod 
                 className={authMethod === 'pin' ? 'active' : ''}
                 onClick={() => setAuthMethod('pin')}
               >
@@ -1033,7 +1088,7 @@ const PrintRelease = () => {
                 </div>
               </AuthMethod>
 
-              <AuthMethod
+              <AuthMethod 
                 className={authMethod === 'qr' ? 'active' : ''}
                 onClick={() => setAuthMethod('qr')}
               >
@@ -1061,8 +1116,8 @@ const PrintRelease = () => {
                     />
                   ))}
                 </PinInput>
-                <ActionButton
-                  className="primary"
+                <ActionButton 
+                  className="primary" 
                   onClick={handlePinSubmit}
                   disabled={loading || pin.join('').length !== 4}
                 >
@@ -1074,13 +1129,13 @@ const PrintRelease = () => {
             {authMethod === 'qr' && (
               <QRCodeDisplay>
                 <div className="qr-code">
-                  <QRCodeCanvas
+                  <QRCodeCanvas 
                     value={JSON.stringify({
                       type: 'secure-print-release',
                       timestamp: Date.now(),
                       sessionId: Math.random().toString(36).substr(2, 9)
-                    })}
-                    size={200}
+                    })} 
+                    size={200} 
                   />
                 </div>
                 <div className="qr-instructions">
@@ -1156,30 +1211,29 @@ const PrintRelease = () => {
                             </div>
                           </div>
                           <div className="job-actions">
-                            <ActionButton
+                            <ActionButton 
                               className="secondary"
-                              onClick={() => handleViewDocument(job)}
-                              title="View Document"
-                              style={{ padding: '8px 12px', minWidth: 'auto' }}
+                              onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
+                              title={job.document?.dataUrl ? "View Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
                             >
                               <FaEye style={{ marginRight: '4px' }} />
                               View
                             </ActionButton>
-                            <ActionButton
+                            <ActionButton 
                               className="secondary"
-                              onClick={() => handlePrintDocument(job)}
-                              disabled={!isJobValidForPrinting(job)}
-                              title={getPrintButtonTitle(job)}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: isJobValidForPrinting(job) ? 1 : 0.6 }}
+                              onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
+                              title={job.document?.dataUrl ? "Print Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
                             >
                               <FaPrint style={{ marginRight: '4px' }} />
                               Print
                             </ActionButton>
-                            <ActionButton
+                            <ActionButton 
                               className="primary"
                               onClick={() => handleReleaseJob(job.id)}
-                              disabled={loading || !selectedPrinter || !isJobWithinTimeLimit(job)}
-                              title={getReleaseButtonTitle(job)}
+                              disabled={loading || !selectedPrinter}
+                              title="Release job to printer (document will be available after release)"
                             >
                               Release
                             </ActionButton>
@@ -1210,9 +1264,9 @@ const PrintRelease = () => {
                       </JobItem>
                     ))}
                   </JobList>
-
+                  
                   <div style={{ marginTop: '20px', textAlign: 'center' }}>
-                    <ActionButton
+                    <ActionButton 
                       className="primary"
                       onClick={handleReleaseAll}
                       disabled={loading || !selectedPrinter || jobsWithDocuments.length === 0}
@@ -1233,7 +1287,7 @@ const PrintRelease = () => {
             </JobsSection>
 
             <div style={{ textAlign: 'center', marginTop: '20px' }}>
-              <ActionButton
+              <ActionButton 
                 className="secondary"
                 onClick={() => {
                   setAuthenticatedUser(null);
