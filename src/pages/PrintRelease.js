@@ -12,7 +12,6 @@ import {
   FaChartBar
 } from 'react-icons/fa';
 import { useParams, useLocation } from 'react-router-dom';
-import { decryptDocument } from '../utils/encryption';
 
 const ReleaseContainer = styled.div`
   padding: 20px;
@@ -1016,9 +1015,9 @@ const PrintRelease = () => {
 
 
   const handleViewDocument = async (job) => {
-    // Generate a temporary print token and get the direct URL to the decrypted document
     try {
-      const { api } = await import('../api/client');
+      // Import the API client properly
+      const api = await import('../api/client').then(module => module.default);
       const token = new URLSearchParams(location.search).get('token');
       
       // Request a temporary print token
@@ -1033,42 +1032,11 @@ const PrintRelease = () => {
       // Construct the URL to the decrypted document using the temporary token
       const viewUrl = `${api.defaults.baseURL}/api/jobs/decrypt/${job.id}?printToken=${tokenResponse.data.printToken}`;
       
-      // Get the document type to determine how to handle it
-      const isPdf = (job.document?.mimeType || '').includes('pdf');
-      const isImage = (job.document?.mimeType || '').startsWith('image/');
+      // Open the document in a new window for viewing
+      const viewWindow = window.open(viewUrl, '_blank');
       
-      // For PDFs and images, open in a new window for viewing
-      if (isPdf) {
-        // Open the document in a new window for viewing
-        const viewWindow = window.open(viewUrl, '_blank');
-        
-        if (!viewWindow) {
-          toast.error('Popup blocked. Please allow popups for this site to view the document.');
-        }
-      } else if (isImage) {
-        // For images, open in a new window
-        const viewWindow = window.open('', '_blank');
-        viewWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>${job.document?.name || 'Document'}</title>
-              <style>
-                body { margin: 0; padding: 20px; text-align: center; background: #f5f5f5; }
-                img { max-width: 100%; height: auto; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-              </style>
-            </head>
-            <body>
-              <img src="${viewUrl}" alt="${job.document?.name || 'Document'}" />
-              <script>window.onload = function() { window.focus(); }</script>
-            </body>
-          </html>
-        `);
-        viewWindow.document.close();
-      } else {
-        // For other formats, open the URL directly (browser will handle based on MIME type)
-        window.open(viewUrl, '_blank');
-        toast.info('Document opened in new window for viewing.');
+      if (!viewWindow) {
+        toast.error('Popup blocked. Please allow popups for this site to view the document.');
       }
     } catch (error) {
       console.error('Error viewing document:', error);
@@ -1077,9 +1045,9 @@ const PrintRelease = () => {
   };
 
   const handlePrintDocument = async (job) => {
-    // Generate a temporary print token and get the direct URL to the decrypted document
     try {
-      const { api } = await import('../api/client');
+      // Import the API client properly
+      const api = await import('../api/client').then(module => module.default);
       const token = new URLSearchParams(location.search).get('token');
       
       // Request a temporary print token
@@ -1094,51 +1062,17 @@ const PrintRelease = () => {
       // Construct the URL to the decrypted document using the temporary token
       const printUrl = `${api.defaults.baseURL}/api/jobs/decrypt/${job.id}?printToken=${tokenResponse.data.printToken}`;
       
-      // Get the document type to determine how to handle it
-      const isPdf = (job.document?.mimeType || '').includes('pdf');
-      const isImage = (job.document?.mimeType || '').startsWith('image/');
+      // Open the document in a new window for printing
+      const printWindow = window.open(printUrl, '_blank');
       
-      // For PDFs and images, open and print
-      if (isPdf) {
-        // Open the document in a new window for printing
-        const printWindow = window.open(printUrl, '_blank');
-        
-        if (printWindow) {
-          printWindow.addEventListener('load', () => {
-            setTimeout(() => {
-              printWindow.print();
-            }, 1000);
-          });
-        } else {
-          toast.error('Popup blocked. Please allow popups for this site to print the document.');
-        }
-      } else if (isImage) {
-        // For images, open in a new window and print
-        const printWindow = window.open('', '_blank');
-        printWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>${job.document?.name || 'Document'}</title>
-              <style>
-                body { margin: 0; padding: 20px; text-align: center; }
-                img { max-width: 100%; height: auto; }
-                @media print { body { padding: 0; } }
-              </style>
-            </head>
-            <body>
-              <img src="${printUrl}" alt="${job.document?.name || 'Document'}" />
-            </body>
-          </html>
-        `);
-        printWindow.document.close();
+      if (printWindow) {
         printWindow.addEventListener('load', () => {
-          setTimeout(() => printWindow.print(), 500);
+          setTimeout(() => {
+            printWindow.print();
+          }, 1000);
         });
       } else {
-        // For other formats, open the URL directly (browser will handle based on MIME type)
-        window.open(printUrl, '_blank');
-        toast.info('Document opened in new window. Use your browser\'s print function.');
+        toast.error('Popup blocked. Please allow popups for this site to print the document.');
       }
     } catch (error) {
       console.error('Error printing document:', error);

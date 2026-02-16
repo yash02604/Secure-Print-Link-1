@@ -13,6 +13,9 @@ if (ENCRYPTION_KEY.length !== KEY_LENGTH) {
   throw new Error(`Encryption key must be ${KEY_LENGTH} bytes long`);
 }
 
+// Export the encryption key for use in other modules
+export { ENCRYPTION_KEY };
+
 /**
  * Encrypt data using AES-256-GCM
  * @param {Buffer} data - The data to encrypt
