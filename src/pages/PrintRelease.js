@@ -922,7 +922,7 @@ const PrintRelease = () => {
           return;
         }
       } else {
-        // For server jobs, fetch from API
+        // For server jobs, fetch from API content endpoint
         contentUrl = `/api/jobs/${job.id}/content?token=${encodeURIComponent(token)}`;
       }
 
@@ -972,7 +972,7 @@ const PrintRelease = () => {
           return;
         }
       } else {
-        // For server jobs, fetch from API
+        // For server jobs, fetch from API content endpoint
         contentUrl = `/api/jobs/${job.id}/content?token=${encodeURIComponent(token)}`;
       }
 

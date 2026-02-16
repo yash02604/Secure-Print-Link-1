@@ -405,16 +405,24 @@ const PrintJobQueue = () => {
       return;
     }
     
-    // REMOVED: Single-view enforcement check
-    // Job can be viewed multiple times until expiration
-    
     try {
-      const documentData = await viewPrintJob(jobId, job.secureToken, currentUser.id);
-      if (documentData?.dataUrl) {
-        // Open in new tab for preview (not download)
-        window.open(documentData.dataUrl, '_blank');
+      // For server jobs, use the content endpoint directly
+      if (!jobId.startsWith('local_')) {
+        const contentUrl = `/api/jobs/${jobId}/content?token=${encodeURIComponent(job.secureToken)}`;
+        const viewWindow = window.open(contentUrl, '_blank');
+        if (!viewWindow) {
+          toast.error('Failed to open document. Please check your popup blocker.');
+          return;
+        }
+        toast.success('Opening document in new tab...');
       } else {
-        toast.error('Document data not available for viewing.');
+        // For local jobs, use the existing viewPrintJob function
+        const documentData = await viewPrintJob(jobId, job.secureToken, currentUser.id);
+        if (documentData?.dataUrl) {
+          window.open(documentData.dataUrl, '_blank');
+        } else {
+          toast.error('Document data not available for viewing.');
+        }
       }
     } catch (error) {
       toast.error('Failed to view document: ' + error.message);

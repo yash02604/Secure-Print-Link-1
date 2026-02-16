@@ -159,6 +159,15 @@ export const validateApiResponse = (response, requiredFields = []) => {
   return response;
 };
 
+// API Base URL management
+export const getApiBaseUrl = () => {
+  return api.defaults.baseURL;
+};
+
+export const setApiBaseUrl = (newUrl) => {
+  api.defaults.baseURL = newUrl;
+};
+
 export { 
   ApiError, 
   ValidationError, 
