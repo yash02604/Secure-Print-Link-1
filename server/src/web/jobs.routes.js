@@ -249,9 +249,12 @@ router.get('/:id', (req, res) => {
     const document = db.prepare('SELECT *, CASE WHEN isEncrypted IS NULL THEN 0 ELSE isEncrypted END AS isEncrypted FROM documents WHERE jobId = ?').get(id);
     if (document) {
       let documentContent = document.content;
+      console.log('Document found:', document.id);
+      console.log('Document is encrypted:', document.isEncrypted);
       
       // If document is encrypted, decrypt it before sending
       if (document.isEncrypted) {
+        console.log('Decrypting document with IV:', document.iv, 'and authTag:', document.authTag);
         // Prepare the document object with IV and authTag for decryption
         const encryptedDocument = {
           content: document.content,
@@ -265,9 +268,11 @@ router.get('/:id', (req, res) => {
         };
         const decryptedDocument = extractDecryptedDocument(encryptedDocument);
         documentContent = decryptedDocument.content;
+        console.log('Decryption successful, content length:', documentContent.length);
       }
       
       const base64 = documentContent.toString('base64');
+      console.log('Base64 content length:', base64.length);
       job.document = {
         dataUrl: `data:${document.mimeType};base64,${base64}`,
         mimeType: document.mimeType,
@@ -278,6 +283,7 @@ router.get('/:id', (req, res) => {
         // Don't include the encrypted content in the response to avoid double processing
         encryptedContent: undefined
       };
+      console.log('Job document created:', job.document);
       
       // Fetch analysis
       const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);

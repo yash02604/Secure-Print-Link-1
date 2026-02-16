@@ -432,8 +432,11 @@ const PrintRelease = () => {
       try {
         const { api } = await import('../api/client');
         const response = await api.get(`/api/jobs/${jobId}?token=${token}`);
+        console.log('Server response:', response.data);
         if (response.data.job) {
           let processedJob = response.data.job;
+          console.log('Processed job:', processedJob);
+          console.log('Job document:', processedJob.document);
           
           // Since all decryption now happens server-side, no client-side decryption is needed
           // Just use the job as received from server
@@ -442,6 +445,7 @@ const PrintRelease = () => {
           setLinkTargetJobId(jobId);
           // Cache document in browser memory for multi-use
           if (processedJob.document) {
+            console.log('Caching document:', processedJob.document);
             setCachedDocument(processedJob.document);
           }
         }
@@ -735,6 +739,11 @@ const PrintRelease = () => {
       ]
     : [];
 
+  console.log('Authenticated user:', authenticatedUser);
+  console.log('Server job:', serverJob);
+  console.log('Print jobs:', printJobs);
+  console.log('User jobs:', userJobs);
+
   const jobsToShow = linkTargetJobId
     ? userJobs.filter(j => j.id === linkTargetJobId)
     : userJobs;
@@ -743,15 +752,28 @@ const PrintRelease = () => {
   // If cachedDocument exists, attach it to jobs that don't have document data
   // Also handle encrypted documents that need decryption
   const jobsWithDocuments = jobsToShow.map(job => {
+    console.log('Processing job:', job.id, 'with document:', job.document);
+    console.log('Cached document:', cachedDocument);
+    console.log('Link target job ID:', linkTargetJobId);
+    console.log('Jobs to show length:', jobsToShow.length);
     // Priority 1: Job already has document with dataUrl (already decrypted by server)
     if (job.document?.dataUrl) {
+      console.log('Job has dataUrl:', job.id);
       return job;
     }
     
-    // Priority 2: Since all decryption now happens server-side, no client-side decryption is needed
-    // Just return the job as is
+    // Priority 2: Use cached document if job IDs match
+    if (cachedDocument && (linkTargetJobId === job.id || jobsToShow.length === 1)) {
+      console.log(`Attaching cached document to job ${job.id}`);
+      return { ...job, document: cachedDocument };
+    }
+    
+    // Priority 3: No document available
+    console.warn(`Job ${job.id} (${job.documentName}) has no document data`);
     return job;
   });
+
+  console.log('Jobs with documents:', jobsWithDocuments);
 
   const handlePinChange = (index, value) => {
     if (value.length > 1) return;
@@ -767,6 +789,7 @@ const PrintRelease = () => {
 
   const handlePinSubmit = async () => {
     const pinString = pin.join('');
+    console.log('PIN submitted:', pinString);
     if (pinString.length !== 4) {
       toast.error('Please enter a 4-digit PIN');
       return;
@@ -775,10 +798,12 @@ const PrintRelease = () => {
     setLoading(true);
     try {
       const result = await loginWithPin(pinString);
+      console.log('Login result:', result);
       setAuthenticatedUser(result.user);
       toast.success(`Welcome, ${result.user.name}!`);
       setPin(['', '', '', '']);
     } catch (error) {
+      console.error('Login error:', error);
       toast.error('Invalid PIN');
       setPin(['', '', '', '']);
     } finally {
@@ -1097,18 +1122,32 @@ const PrintRelease = () => {
                           <div className="job-actions">
                             <ActionButton 
                               className="secondary"
-                              onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
-                              title={job.document?.dataUrl ? "View Document" : "No preview available"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                              onClick={() => {
+                                console.log('View button clicked, job.document:', job.document);
+                                if (job.document) {
+                                  handleViewDocument(job);
+                                } else {
+                                  toast.info('Document preview not available. Release the job to print.');
+                                }
+                              }}
+                              title={job.document ? "View Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document ? 1 : 0.6 }}
                             >
                               <FaEye style={{ marginRight: '4px' }} />
                               View
                             </ActionButton>
                             <ActionButton 
                               className="secondary"
-                              onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
-                              title={job.document?.dataUrl ? "Print Document" : "No preview available"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                              onClick={() => {
+                                console.log('Print button clicked, job.document:', job.document);
+                                if (job.document) {
+                                  handlePrintDocument(job);
+                                } else {
+                                  toast.info('Document not available. Release the job first.');
+                                }
+                              }}
+                              title={job.document ? "Print Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document ? 1 : 0.6 }}
                             >
                               <FaPrint style={{ marginRight: '4px' }} />
                               Print

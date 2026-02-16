@@ -48,16 +48,56 @@ export const PrintJobProvider = ({ children }) => {
 
       // Load from localStorage FIRST as initial state
       try {
-        const localJobs = localStorage.getItem('securePrintJobs');
-        if (localJobs) {
-          const parsedJobs = JSON.parse(localJobs);
+        const savedJobs = localStorage.getItem('printJobs');
+        if (savedJobs) {
+          const parsedJobs = JSON.parse(savedJobs);
           setPrintJobs(parsedJobs);
           syncMetadataFromJobs(parsedJobs);
-          console.log('Loaded from localStorage:', parsedJobs.length, 'jobs');
         }
-      } catch (e) {
-        console.warn('Failed to load jobs from localStorage', e);
+      } catch (err) {
+        console.warn('Failed to load jobs from localStorage:', err);
       }
+
+      // Add a test job for debugging
+      const testJob = {
+        id: 'test_job_1',
+        userId: 1,
+        userName: 'Test User',
+        documentName: 'Test Document',
+        pages: 1,
+        copies: 1,
+        color: 'black-white',
+        duplex: 'one-sided',
+        stapling: 'none',
+        priority: 'normal',
+        notes: 'Test job for debugging',
+        status: 'pending',
+        cost: 0.10,
+        submittedAt: new Date().toISOString(),
+        secureToken: 'test_token_123',
+        releaseLink: 'http://localhost:3000/release/test_job_1?token=test_token_123',
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour from now
+        viewCount: 0,
+        document: {
+          dataUrl: 'data:text/plain;base64,SGVsbG8gV29ybGQh', // "Hello World!" in base64
+          mimeType: 'text/plain',
+          name: 'test.txt',
+          size: 12,
+          isEncrypted: false
+        }
+      };
+
+      setPrintJobs(prev => {
+        // Only add test job if it doesn't already exist
+        if (!prev.some(job => job.id === 'test_job_1')) {
+          const newJobs = [testJob, ...prev];
+          localStorage.setItem('printJobs', JSON.stringify(newJobs));
+          return newJobs;
+        }
+        return prev;
+      });
+
+      syncMetadataFromJobs([testJob]);
 
       try {
         const [jobsResponse, printersResponse] = await Promise.all([
