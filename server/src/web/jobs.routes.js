@@ -4,6 +4,7 @@ import multer from 'multer';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { createEncryptedDocument, extractDecryptedDocument } from '../utils/encryption.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -153,10 +154,13 @@ router.post('/', (req, res, next) => {
       const documentId = nanoid();
       const fileContent = fs.readFileSync(req.file.path);
       
+      // Encrypt the document content before storing
+      const encryptedDocument = createEncryptedDocument(fileContent, req.file.mimetype, req.file.originalname, req.file.size);
+      
       db.prepare(`INSERT INTO documents (
-        id, jobId, content, mimeType, filename, size, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        documentId, id, fileContent, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString()
+        id, jobId, content, mimeType, filename, size, createdAt, isEncrypted
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        documentId, id, encryptedDocument.content, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString(), encryptedDocument.isEncrypted ? 1 : 0
       );
 
       // Mock Document Analysis
@@ -241,9 +245,17 @@ router.get('/:id', (req, res) => {
 
   // Fetch document from DB if available
   try {
-    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
+    const document = db.prepare('SELECT *, CASE WHEN isEncrypted IS NULL THEN 0 ELSE isEncrypted END AS isEncrypted FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      const base64 = document.content.toString('base64');
+      let documentContent = document.content;
+      
+      // If document is encrypted, decrypt it before sending
+      if (document.isEncrypted) {
+        const decryptedDocument = extractDecryptedDocument(document);
+        documentContent = decryptedDocument.content;
+      }
+      
+      const base64 = documentContent.toString('base64');
       job.document = {
         dataUrl: `data:${document.mimeType};base64,${base64}`,
         mimeType: document.mimeType,
@@ -358,9 +370,17 @@ router.post('/:id/view', (req, res) => {
 
     // Return document data for preview (NOT download)
     let documentData = null;
-    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
+    const document = db.prepare('SELECT *, CASE WHEN isEncrypted IS NULL THEN 0 ELSE isEncrypted END AS isEncrypted FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      const base64 = document.content.toString('base64');
+      let documentContent = document.content;
+      
+      // If document is encrypted, decrypt it before sending
+      if (document.isEncrypted) {
+        const decryptedDocument = extractDecryptedDocument(document);
+        documentContent = decryptedDocument.content;
+      }
+      
+      const base64 = documentContent.toString('base64');
       documentData = {
         dataUrl: `data:${document.mimeType};base64,${base64}`,
         mimeType: document.mimeType,

@@ -66,6 +66,7 @@ export function createDb(dbPath) {
       filename TEXT,
       size INTEGER,
       createdAt TEXT,
+      isEncrypted INTEGER DEFAULT 0,
       FOREIGN KEY(jobId) REFERENCES jobs(id) ON DELETE CASCADE
     );
 

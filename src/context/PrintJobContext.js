@@ -1,6 +1,8 @@
 import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
 import api from '../api/client';
 import { toast } from 'react-toastify';
+import { encryptDocument } from '../utils/encryption';
+import { Buffer } from 'buffer';
 
 const PrintJobContext = createContext();
 
@@ -257,17 +259,33 @@ export const PrintJobProvider = ({ children }) => {
             filename: jobData.file.name,
             originalname: jobData.file.name,
             mimetype: jobData.file.type,
-            size: jobData.file.size
+            size: jobData.file.size,
+            isEncrypted: true
           };
 
-          // Store as Data URL if file is small enough (< 2MB)
-          if (jobData.file.size < 2 * 1024 * 1024) {
-            const reader = new FileReader();
-            const dataUrl = await new Promise((resolve) => {
-              reader.onload = (e) => resolve(e.target.result);
-              reader.readAsDataURL(jobData.file);
-            });
-            docData.dataUrl = dataUrl;
+          // Read file as ArrayBuffer for encryption
+          const arrayBuffer = await jobData.file.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
+          const buffer = Buffer.from(uint8Array);
+          
+          try {
+            // Encrypt the file content
+            const encryptedContent = encryptDocument(buffer);
+            docData.encryptedContent = encryptedContent;
+          } catch (encryptionError) {
+            console.error('Encryption failed:', encryptionError);
+            // Fallback to unencrypted storage if encryption fails
+            docData.isEncrypted = false;
+            
+            // Store as Data URL if file is small enough (< 2MB)
+            if (jobData.file.size < 2 * 1024 * 1024) {
+              const reader = new FileReader();
+              const dataUrl = await new Promise((resolve) => {
+                reader.onload = (e) => resolve(e.target.result);
+                reader.readAsDataURL(jobData.file);
+              });
+              docData.dataUrl = dataUrl;
+            }
           }
         }
 
@@ -342,12 +360,39 @@ export const PrintJobProvider = ({ children }) => {
         throw new Error('Document already viewed');
       }
 
+      // If the document is encrypted, decrypt it before returning
+      let returnDocument = job?.document;
+      if (job?.document?.isEncrypted && job.document.encryptedContent) {
+        try {
+          // Import decryption function
+          const { decryptDocument } = await import('../utils/encryption');
+          
+          // Decrypt the content
+          const decryptedBuffer = decryptDocument(job.document.encryptedContent);
+          
+          // Convert to data URL for preview
+          const uint8Array = new Uint8Array(decryptedBuffer);
+          const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
+          const dataUrl = `data:${job.document.mimetype || 'application/octet-stream'};base64,${base64}`;
+          
+          returnDocument = {
+            ...job.document,
+            dataUrl,
+            content: decryptedBuffer
+          };
+        } catch (decryptionError) {
+          console.error('Decryption failed:', decryptionError);
+          toast.error('Failed to decrypt document');
+          throw new Error('Failed to decrypt document');
+        }
+      }
+
       setPrintJobs(prev => prev.map(j => 
         j.id === jobId ? { ...j, viewCount: 1, firstViewedAt: now, lastViewedAt: now } : j
       ));
 
       toast.success('Document preview opened (Local)');
-      return job?.document;
+      return returnDocument;
     }
 
     setLoading(true);

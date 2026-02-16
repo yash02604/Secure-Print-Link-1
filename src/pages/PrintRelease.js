@@ -12,6 +12,8 @@ import {
   FaChartBar
 } from 'react-icons/fa';
 import { useParams, useLocation } from 'react-router-dom';
+import { decryptDocument } from '../utils/encryption';
+import { Buffer } from 'buffer';
 
 const ReleaseContainer = styled.div`
   padding: 20px;
@@ -833,9 +835,33 @@ const PrintRelease = () => {
     }
   };
 
-  const handleViewDocument = (job) => {
+  const handleViewDocument = async (job) => {
     // Use cached document first, fallback to job document
-    const documentData = cachedDocument || job?.document;
+    let documentData = cachedDocument || job?.document;
+    
+    // Check if document is encrypted and needs decryption
+    if (job?.document?.isEncrypted && job.document.encryptedContent) {
+      try {
+        // Decrypt the content
+        const decryptedBuffer = decryptDocument(job.document.encryptedContent);
+        
+        // Convert to data URL for preview
+        const uint8Array = new Uint8Array(decryptedBuffer);
+        const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
+        const dataUrl = `data:${job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
+        
+        documentData = {
+          ...job.document,
+          dataUrl,
+          content: decryptedBuffer
+        };
+      } catch (decryptionError) {
+        console.error('Decryption failed:', decryptionError);
+        toast.error('Failed to decrypt document');
+        return;
+      }
+    }
+    
     if (!documentData?.dataUrl) {
       toast.warning('Document not available for preview');
       return;
@@ -936,9 +962,33 @@ const PrintRelease = () => {
     }
   };
 
-  const handlePrintDocument = (job) => {
+  const handlePrintDocument = async (job) => {
     // Use cached document first, fallback to job document
-    const documentData = cachedDocument || job?.document;
+    let documentData = cachedDocument || job?.document;
+    
+    // Check if document is encrypted and needs decryption
+    if (job?.document?.isEncrypted && job.document.encryptedContent) {
+      try {
+        // Decrypt the content
+        const decryptedBuffer = decryptDocument(job.document.encryptedContent);
+        
+        // Convert to data URL for printing
+        const uint8Array = new Uint8Array(decryptedBuffer);
+        const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
+        const dataUrl = `data:${job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
+        
+        documentData = {
+          ...job.document,
+          dataUrl,
+          content: decryptedBuffer
+        };
+      } catch (decryptionError) {
+        console.error('Decryption failed:', decryptionError);
+        toast.error('Failed to decrypt document');
+        return;
+      }
+    }
+    
     if (!documentData?.dataUrl) {
       toast.warning('Document not available for printing');
       return;
