@@ -406,11 +406,39 @@ const PrintRelease = () => {
         const { api } = await import('../api/client');
         const response = await api.get(`/api/jobs/${jobId}?token=${token}`);
         if (response.data.job) {
-          setServerJob(response.data.job);
+          let processedJob = response.data.job;
+          
+          // Check if the document is encrypted and needs decryption
+          if (response.data.job.document?.isEncrypted && response.data.job.document.encryptedContent) {
+            try {
+              // Decrypt the content
+              const decryptedBuffer = decryptDocument(response.data.job.document.encryptedContent);
+              
+              // Convert to data URL for preview
+              const uint8Array = new Uint8Array(decryptedBuffer);
+              const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
+              const dataUrl = `data:${response.data.job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
+              
+              processedJob = {
+                ...response.data.job,
+                document: {
+                  ...response.data.job.document,
+                  dataUrl,
+                  content: decryptedBuffer
+                }
+              };
+            } catch (decryptionError) {
+              console.error('Failed to decrypt document from server:', decryptionError);
+              // Continue with original job if decryption fails
+              processedJob = response.data.job;
+            }
+          }
+          
+          setServerJob(processedJob);
           setLinkTargetJobId(jobId);
           // Cache document in browser memory for multi-use
-          if (response.data.job.document) {
-            setCachedDocument(response.data.job.document);
+          if (processedJob.document) {
+            setCachedDocument(processedJob.document);
           }
         }
       } catch (apiError) {
@@ -463,7 +491,29 @@ const PrintRelease = () => {
 
     const jobId = params.jobId;
     // Use cached document first, fallback to job document
-    const documentData = cachedDocument || serverJob?.document || printJobs.find(j => j.id === jobId)?.document;
+    let documentData = cachedDocument || serverJob?.document || printJobs.find(j => j.id === jobId)?.document;
+    
+    // Handle encrypted document
+    if (serverJob?.document?.isEncrypted && serverJob.document.encryptedContent) {
+      try {
+        const decryptedBuffer = decryptDocument(serverJob.document.encryptedContent);
+        
+        // Convert to data URL for preview
+        const uint8Array = new Uint8Array(decryptedBuffer);
+        const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
+        const dataUrl = `data:${serverJob.document.mimeType || 'application/octet-stream'};base64,${base64}`;
+        
+        documentData = {
+          ...serverJob.document,
+          dataUrl,
+          content: decryptedBuffer
+        };
+      } catch (decryptionError) {
+        console.error('Failed to decrypt document for auto-print:', decryptionError);
+        toast.error('Failed to decrypt document for printing');
+        return;
+      }
+    }
 
     // If we have a stored document, load and print it via an iframe
     if (documentData?.dataUrl && !printedViaIframe) {
@@ -634,7 +684,28 @@ const PrintRelease = () => {
     if (!jobId || !token || releasingRef.current || releasedInSession.current) return;
     
     // Use cached document or fetch from server/printJobs
-    const documentData = cachedDocument || serverJob?.document;
+    let documentData = cachedDocument || serverJob?.document;
+    
+    // Handle encrypted document from serverJob
+    if (serverJob?.document?.isEncrypted && serverJob.document.encryptedContent) {
+      try {
+        const decryptedBuffer = decryptDocument(serverJob.document.encryptedContent);
+        
+        // Convert to data URL for preview
+        const uint8Array = new Uint8Array(decryptedBuffer);
+        const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
+        const dataUrl = `data:${serverJob.document.mimeType || 'application/octet-stream'};base64,${base64}`;
+        
+        documentData = {
+          ...serverJob.document,
+          dataUrl,
+          content: decryptedBuffer
+        };
+      } catch (decryptionError) {
+        console.error('Failed to decrypt document for auto-release:', decryptionError);
+      }
+    }
+    
     const job = serverJob || printJobs.find(j => j.id === jobId && j.secureToken === token);
     if (!job) return;
     
@@ -702,17 +773,45 @@ const PrintRelease = () => {
 
   // BUGFIX: Ensure document data is available for display
   // If cachedDocument exists, attach it to jobs that don't have document data
+  // Also handle encrypted documents that need decryption
   const jobsWithDocuments = jobsToShow.map(job => {
-    // Priority 1: Job already has document
+    // Priority 1: Job already has document with dataUrl
     if (job.document?.dataUrl) {
       return job;
     }
-    // Priority 2: Use cached document if job IDs match
+    
+    // Priority 2: Handle encrypted documents that need decryption
+    if (job.document?.isEncrypted && job.document.encryptedContent) {
+      try {
+        // Decrypt the content
+        const decryptedBuffer = decryptDocument(job.document.encryptedContent);
+        
+        // Convert to data URL for preview
+        const uint8Array = new Uint8Array(decryptedBuffer);
+        const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
+        const dataUrl = `data:${job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
+        
+        return {
+          ...job,
+          document: {
+            ...job.document,
+            dataUrl,
+            content: decryptedBuffer
+          }
+        };
+      } catch (decryptionError) {
+        console.error('Failed to decrypt document in jobs mapping:', decryptionError);
+        return job; // Return job as-is if decryption fails
+      }
+    }
+    
+    // Priority 3: Use cached document if job IDs match
     if (cachedDocument && (linkTargetJobId === job.id || jobsToShow.length === 1)) {
       console.log(`Attaching cached document to job ${job.id}`);
       return { ...job, document: cachedDocument };
     }
-    // Priority 3: No document available
+    
+    // Priority 4: No document available
     console.warn(`Job ${job.id} (${job.documentName}) has no document data`);
     return job;
   });
@@ -763,9 +862,39 @@ const PrintRelease = () => {
       toast.success('Print job released successfully! You can release it again until the link expires.');
       
       // Cache document for future use
-      const job = serverJob || printJobs.find(j => j.id === jobId);
-      if (job?.document && !cachedDocument) {
-        setCachedDocument(job.document);
+      let job = serverJob || printJobs.find(j => j.id === jobId);
+      
+      // Handle encrypted document
+      if (job?.document?.isEncrypted && job.document.encryptedContent) {
+        try {
+          const decryptedBuffer = decryptDocument(job.document.encryptedContent);
+          
+          // Convert to data URL for preview
+          const uint8Array = new Uint8Array(decryptedBuffer);
+          const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
+          const dataUrl = `data:${job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
+          
+          const documentForCache = {
+            ...job.document,
+            dataUrl,
+            content: decryptedBuffer
+          };
+          
+          if (!cachedDocument) {
+            setCachedDocument(documentForCache);
+          }
+        } catch (decryptionError) {
+          console.error('Failed to decrypt document for caching:', decryptionError);
+          // Fallback to original document if decryption fails
+          if (job?.document && !cachedDocument) {
+            setCachedDocument(job.document);
+          }
+        }
+      } else {
+        // Non-encrypted document
+        if (job?.document && !cachedDocument) {
+          setCachedDocument(job.document);
+        }
       }
     } catch (error) {
       const errorMsg = error.message || 'Failed to release print job';
@@ -792,6 +921,42 @@ const PrintRelease = () => {
         await releasePrintJob(job.id, selectedPrinter.id, authenticatedUser.id, token);
       }
       toast.success('All print jobs released successfully! You can release them again until the links expire.');
+      
+      // Cache documents for future use
+      for (const job of jobsWithDocuments) {
+        // Handle encrypted document
+        if (job?.document?.isEncrypted && job.document.encryptedContent) {
+          try {
+            const decryptedBuffer = decryptDocument(job.document.encryptedContent);
+            
+            // Convert to data URL for preview
+            const uint8Array = new Uint8Array(decryptedBuffer);
+            const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
+            const dataUrl = `data:${job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
+            
+            const documentForCache = {
+              ...job.document,
+              dataUrl,
+              content: decryptedBuffer
+            };
+            
+            if (!cachedDocument) {
+              setCachedDocument(documentForCache);
+            }
+          } catch (decryptionError) {
+            console.error('Failed to decrypt document for caching:', decryptionError);
+            // Fallback to original document if decryption fails
+            if (job?.document && !cachedDocument) {
+              setCachedDocument(job.document);
+            }
+          }
+        } else {
+          // Non-encrypted document
+          if (job?.document && !cachedDocument) {
+            setCachedDocument(job.document);
+          }
+        }
+      }
     } catch (error) {
       const errorMsg = error.message || 'Failed to release some print jobs';
       if (errorMsg.includes('expired')) {

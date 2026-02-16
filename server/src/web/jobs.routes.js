@@ -260,7 +260,9 @@ router.get('/:id', (req, res) => {
         dataUrl: `data:${document.mimeType};base64,${base64}`,
         mimeType: document.mimeType,
         name: document.filename,
-        size: document.size
+        size: document.size,
+        // Include encryption info for client-side handling if needed
+        isEncrypted: document.isEncrypted
       };
       
       // Fetch analysis
@@ -278,7 +280,9 @@ router.get('/:id', (req, res) => {
         job.document = {
           dataUrl,
           mimeType: metadata.mimetype,
-          name: metadata.originalname || job.documentName
+          name: metadata.originalname || job.documentName,
+          // Filesystem documents are not marked as encrypted
+          isEncrypted: false
         };
       } catch (err) {
         console.error('Error reading file for job:', id, err);
@@ -385,7 +389,9 @@ router.post('/:id/view', (req, res) => {
         dataUrl: `data:${document.mimeType};base64,${base64}`,
         mimeType: document.mimeType,
         name: document.filename,
-        size: document.size
+        size: document.size,
+        // Include encryption info for client-side handling if needed
+        isEncrypted: document.isEncrypted
       };
     } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
       const fileBuffer = fs.readFileSync(metadata.filePath);
@@ -393,7 +399,9 @@ router.post('/:id/view', (req, res) => {
       documentData = {
         dataUrl: `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`,
         mimeType: metadata.mimetype,
-        name: metadata.originalname || job.documentName
+        name: metadata.originalname || job.documentName,
+        // Filesystem documents are not marked as encrypted
+        isEncrypted: false
       };
     }
 
