@@ -13,7 +13,6 @@ import {
 } from 'react-icons/fa';
 import { useParams, useLocation } from 'react-router-dom';
 import { decryptDocument } from '../utils/encryption';
-import { Buffer } from 'buffer';
 
 const ReleaseContainer = styled.div`
   padding: 20px;
