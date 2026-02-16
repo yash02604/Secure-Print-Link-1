@@ -308,7 +308,35 @@ const ActionButton = styled.button`
 `;
 
 const UserInfo = styled.div`
-  // ... existing code ...
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  
+  .user-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(52, 152, 219, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #3498db;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  
+  .user-details {
+    .user-name {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    
+    .user-role {
+      font-size: 14px;
+      opacity: 0.8;
+    }
+  }
 `;
 
 const AnalysisSection = styled.div`
@@ -985,255 +1013,121 @@ const PrintRelease = () => {
     });
   };
 
-  // Helper: Convert data URL to Blob URL to avoid browser size limits
-  const convertDataUrlToBlob = (dataUrl) => {
-    try {
-      if (!dataUrl.startsWith('data:')) return dataUrl;
-      
-      const arr = dataUrl.split(',');
-      const mime = arr[0].match(/:(.*?);/)[1];
-      const bstr = atob(arr[1]);
-      let n = bstr.length;
-      const u8arr = new Uint8Array(n);
-      while(n--) {
-        u8arr[n] = bstr.charCodeAt(n);
-      }
-      const blob = new Blob([u8arr], {type: mime});
-      return URL.createObjectURL(blob);
-    } catch (e) {
-      console.warn('Failed to create blob URL, using data URL fallback', e);
-      return dataUrl;
-    }
-  };
+
 
   const handleViewDocument = async (job) => {
-    // Use cached document first, fallback to job document
-    let documentData = cachedDocument || job?.document;
-    
-    // Check if document is encrypted and needs decryption
-    // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
-    if (job?.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
-      try {
-        // Decrypt the content
-        const decryptedBuffer = decryptDocument(job.document.encryptedContent);
-        
-        // Convert to data URL for preview
-        const uint8Array = new Uint8Array(decryptedBuffer);
-        const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
-        const dataUrl = `data:${job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
-        
-        documentData = {
-          ...job.document,
-          dataUrl,
-          content: decryptedBuffer
-        };
-      } catch (decryptionError) {
-        console.error('Decryption failed:', decryptionError);
-        toast.error('Failed to decrypt document');
-        return;
+    // Generate a temporary print token and get the direct URL to the decrypted document
+    try {
+      const { api } = await import('../api/client');
+      const token = new URLSearchParams(location.search).get('token');
+      
+      // Request a temporary print token
+      const tokenResponse = await api.post(`/api/jobs/${job.id}/print-token`, {
+        token: token
+      });
+      
+      if (!tokenResponse.data.success || !tokenResponse.data.printToken) {
+        throw new Error('Failed to generate print token');
       }
-    }
-    
-    if (!documentData?.dataUrl) {
-      toast.warning('Document not available for preview');
-      return;
-    }
-
-    const { dataUrl, mimeType, name } = documentData;
-    const isPdf = (mimeType || '').includes('pdf');
-    const isImage = (mimeType || '').startsWith('image/');
-    const isText = (mimeType || '').includes('text/');
-    const isWord = /msword|wordprocessingml/.test(mimeType || '');
-    const isExcel = /excel|spreadsheetml/.test(mimeType || '');
-    const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
-    const isOffice = isWord || isExcel || isPowerPoint;
-
-    // For PDFs and images, open in a new window for viewing/printing
-    if (isPdf || isImage) {
+      
+      // Construct the URL to the decrypted document using the temporary token
+      const viewUrl = `${api.defaults.baseURL}/api/jobs/decrypt/${job.id}?printToken=${tokenResponse.data.printToken}`;
+      
+      // Get the document type to determine how to handle it
+      const isPdf = (job.document?.mimeType || '').includes('pdf');
+      const isImage = (job.document?.mimeType || '').startsWith('image/');
+      
+      // For PDFs and images, open in a new window for viewing
       if (isPdf) {
-        // Convert to blob URL for PDFs (avoids data URL size limits)
-        const blobUrl = convertDataUrlToBlob(dataUrl);
-        const printWindow = window.open(blobUrl, '_blank');
+        // Open the document in a new window for viewing
+        const viewWindow = window.open(viewUrl, '_blank');
         
-        // Cleanup blob URL after window loads
-        if (blobUrl !== dataUrl && printWindow) {
-          printWindow.addEventListener('load', () => {
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-          });
+        if (!viewWindow) {
+          toast.error('Popup blocked. Please allow popups for this site to view the document.');
         }
       } else if (isImage) {
-        const printWindow = window.open('', '_blank');
-        printWindow.document.write(`
+        // For images, open in a new window
+        const viewWindow = window.open('', '_blank');
+        viewWindow.document.write(`
           <!DOCTYPE html>
           <html>
             <head>
-              <title>${name || 'Document'}</title>
+              <title>${job.document?.name || 'Document'}</title>
               <style>
                 body { margin: 0; padding: 20px; text-align: center; background: #f5f5f5; }
                 img { max-width: 100%; height: auto; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
               </style>
             </head>
             <body>
-              <img src="${dataUrl}" alt="${name || 'Document'}" />
+              <img src="${viewUrl}" alt="${job.document?.name || 'Document'}" />
               <script>window.onload = function() { window.focus(); }</script>
             </body>
           </html>
         `);
-        printWindow.document.close();
+        viewWindow.document.close();
+      } else {
+        // For other formats, open the URL directly (browser will handle based on MIME type)
+        window.open(viewUrl, '_blank');
+        toast.info('Document opened in new window for viewing.');
       }
-    } else if (isText) {
-      // For text files, open in a new window with formatted text
-      try {
-        const base64 = dataUrl.split(',')[1] || '';
-        const textContent = atob(base64);
-        const printWindow = window.open('', '_blank');
-        printWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>${name || 'Document'}</title>
-              <style>
-                body { margin: 0; padding: 20px; font-family: monospace; background: white; }
-                pre { white-space: pre-wrap; word-wrap: break-word; }
-              </style>
-            </head>
-            <body>
-              <pre>${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre>
-            </body>
-          </html>
-        `);
-        printWindow.document.close();
-      } catch (err) {
-        window.open(dataUrl, '_blank');
-      }
-    } else if (isOffice) {
-      // For Office documents, open for download/viewing
-      const officeType = isWord ? 'Word' : isExcel ? 'Excel' : 'PowerPoint';
-      toast.info(`Opening ${officeType} document. Use File > Print in your application to print.`);
-      
-      // Create a download link
-      const link = document.createElement('a');
-      link.href = dataUrl;
-      link.download = name || 'document';
-      link.target = '_blank';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } else {
-      // For other formats, try to open directly
-      // Use blob URL for safety (handles large files)
-      const blobUrl = convertDataUrlToBlob(dataUrl);
-      const printWindow = window.open(blobUrl, '_blank');
-      
-      // Cleanup blob URL after window loads
-      if (blobUrl !== dataUrl && printWindow) {
-        printWindow.addEventListener('load', () => {
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-        });
-      }
+    } catch (error) {
+      console.error('Error viewing document:', error);
+      toast.error('Failed to view document: ' + (error.message || 'Unknown error'));
     }
   };
 
   const handlePrintDocument = async (job) => {
-    // Use cached document first, fallback to job document
-    let documentData = cachedDocument || job?.document;
-    
-    // Check if document is encrypted and needs decryption
-    // Only decrypt if server hasn't already decrypted it (i.e., if no dataUrl exists)
-    if (job?.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
-      try {
-        // Decrypt the content
-        const decryptedBuffer = decryptDocument(job.document.encryptedContent);
-        
-        // Convert to data URL for printing
-        const uint8Array = new Uint8Array(decryptedBuffer);
-        const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
-        const dataUrl = `data:${job.document.mimeType || 'application/octet-stream'};base64,${base64}`;
-        
-        documentData = {
-          ...job.document,
-          dataUrl,
-          content: decryptedBuffer
-        };
-      } catch (decryptionError) {
-        console.error('Decryption failed:', decryptionError);
-        toast.error('Failed to decrypt document');
-        return;
-      }
-    }
-    
-    if (!documentData?.dataUrl) {
-      toast.warning('Document not available for printing');
-      return;
-    }
-
-    const { dataUrl, mimeType, name } = documentData;
-    const isPdf = (mimeType || '').includes('pdf');
-    const isImage = (mimeType || '').startsWith('image/');
-    const isText = (mimeType || '').includes('text/');
-    const isWord = /msword|wordprocessingml/.test(mimeType || '');
-    const isExcel = /excel|spreadsheetml/.test(mimeType || '');
-    const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
-    const isOffice = isWord || isExcel || isPowerPoint;
-
-    // For PDFs, open and print
-    if (isPdf) {
-      // Convert to blob URL for PDFs (avoids data URL size limits)
-      const blobUrl = convertDataUrlToBlob(dataUrl);
-      const printWindow = window.open(blobUrl, '_blank');
+    // Generate a temporary print token and get the direct URL to the decrypted document
+    try {
+      const { api } = await import('../api/client');
+      const token = new URLSearchParams(location.search).get('token');
       
-      if (printWindow) {
-        printWindow.addEventListener('load', () => {
-          setTimeout(() => {
-            printWindow.print();
-            // Cleanup blob URL after print dialog closes
-            if (blobUrl !== dataUrl) {
-              setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-            }
-          }, 1000);
-        });
-      }
-    } else if (isImage) {
-      // For images, open in a new window and print
-      const printWindow = window.open('', '_blank');
-      printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <title>${name || 'Document'}</title>
-            <style>
-              body { margin: 0; padding: 20px; text-align: center; }
-              img { max-width: 100%; height: auto; }
-              @media print { body { padding: 0; } }
-            </style>
-          </head>
-          <body>
-            <img src="${dataUrl}" alt="${name || 'Document'}" />
-          </body>
-        </html>
-      `);
-      printWindow.document.close();
-      printWindow.addEventListener('load', () => {
-        setTimeout(() => printWindow.print(), 500);
+      // Request a temporary print token
+      const tokenResponse = await api.post(`/api/jobs/${job.id}/print-token`, {
+        token: token
       });
-    } else if (isText) {
-      // For text files, open and print
-      try {
-        const base64 = dataUrl.split(',')[1] || '';
-        const textContent = atob(base64);
+      
+      if (!tokenResponse.data.success || !tokenResponse.data.printToken) {
+        throw new Error('Failed to generate print token');
+      }
+      
+      // Construct the URL to the decrypted document using the temporary token
+      const printUrl = `${api.defaults.baseURL}/api/jobs/decrypt/${job.id}?printToken=${tokenResponse.data.printToken}`;
+      
+      // Get the document type to determine how to handle it
+      const isPdf = (job.document?.mimeType || '').includes('pdf');
+      const isImage = (job.document?.mimeType || '').startsWith('image/');
+      
+      // For PDFs and images, open and print
+      if (isPdf) {
+        // Open the document in a new window for printing
+        const printWindow = window.open(printUrl, '_blank');
+        
+        if (printWindow) {
+          printWindow.addEventListener('load', () => {
+            setTimeout(() => {
+              printWindow.print();
+            }, 1000);
+          });
+        } else {
+          toast.error('Popup blocked. Please allow popups for this site to print the document.');
+        }
+      } else if (isImage) {
+        // For images, open in a new window and print
         const printWindow = window.open('', '_blank');
         printWindow.document.write(`
           <!DOCTYPE html>
           <html>
             <head>
-              <title>${name || 'Document'}</title>
+              <title>${job.document?.name || 'Document'}</title>
               <style>
-                body { margin: 0; padding: 20px; font-family: monospace; }
-                pre { white-space: pre-wrap; word-wrap: break-word; }
+                body { margin: 0; padding: 20px; text-align: center; }
+                img { max-width: 100%; height: auto; }
+                @media print { body { padding: 0; } }
               </style>
             </head>
             <body>
-              <pre>${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre>
+              <img src="${printUrl}" alt="${job.document?.name || 'Document'}" />
             </body>
           </html>
         `);
@@ -1241,34 +1135,14 @@ const PrintRelease = () => {
         printWindow.addEventListener('load', () => {
           setTimeout(() => printWindow.print(), 500);
         });
-      } catch (err) {
-        toast.error('Unable to print text document');
+      } else {
+        // For other formats, open the URL directly (browser will handle based on MIME type)
+        window.open(printUrl, '_blank');
+        toast.info('Document opened in new window. Use your browser\'s print function.');
       }
-    } else if (isOffice) {
-      // For Office documents, download and inform user
-      toast.info('Office documents need to be opened in their native application to print. Downloading file...');
-      const link = document.createElement('a');
-      link.href = dataUrl;
-      link.download = name || 'document';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } else {
-      // For other formats, try to open and print
-      // Use blob URL for safety (handles large files)
-      const blobUrl = convertDataUrlToBlob(dataUrl);
-      const printWindow = window.open(blobUrl, '_blank');
-      if (printWindow) {
-        printWindow.addEventListener('load', () => {
-          setTimeout(() => {
-            printWindow.print();
-            // Cleanup blob URL
-            if (blobUrl !== dataUrl) {
-              setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-            }
-          }, 1000);
-        });
-      }
+    } catch (error) {
+      console.error('Error printing document:', error);
+      toast.error('Failed to print document: ' + (error.message || 'Unknown error'));
     }
   };
 

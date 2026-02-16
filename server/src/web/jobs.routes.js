@@ -4,7 +4,7 @@ import multer from 'multer';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import { createEncryptedDocument, extractDecryptedDocument } from '../utils/encryption.js';
+import { createEncryptedDocument, extractDecryptedDocument, isValidPDF } from '../utils/crypto.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -158,9 +158,9 @@ router.post('/', (req, res, next) => {
       const encryptedDocument = createEncryptedDocument(fileContent, req.file.mimetype, req.file.originalname, req.file.size);
       
       db.prepare(`INSERT INTO documents (
-        id, jobId, content, mimeType, filename, size, createdAt, isEncrypted
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        documentId, id, encryptedDocument.content, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString(), encryptedDocument.isEncrypted ? 1 : 0
+        id, jobId, content, mimeType, filename, size, createdAt, isEncrypted, iv, authTag
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        documentId, id, encryptedDocument.content, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString(), encryptedDocument.isEncrypted ? 1 : 0, encryptedDocument.iv, encryptedDocument.authTag
       );
 
       // Mock Document Analysis
@@ -251,7 +251,18 @@ router.get('/:id', (req, res) => {
       
       // If document is encrypted, decrypt it before sending
       if (document.isEncrypted) {
-        const decryptedDocument = extractDecryptedDocument(document);
+        // Prepare the document object with IV and authTag for decryption
+        const encryptedDocument = {
+          content: document.content,
+          iv: document.iv,
+          authTag: document.authTag,
+          mimeType: document.mimeType,
+          filename: document.filename,
+          size: document.size,
+          createdAt: document.createdAt,
+          isEncrypted: document.isEncrypted
+        };
+        const decryptedDocument = extractDecryptedDocument(encryptedDocument);
         documentContent = decryptedDocument.content;
       }
       
@@ -296,6 +307,116 @@ router.get('/:id', (req, res) => {
   }
 
   res.json({ job });
+});
+
+// Temporary print tokens storage (in production, use Redis or similar)
+const printTokens = new Map(); // jobId -> { token, expiresAt }
+
+// Create a temporary print token
+router.post('/:id/print-token', (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+  const { token } = req.body || {};
+  
+  // Validate job exists
+  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
+  
+  // Generate a temporary print token (valid for 60 seconds)
+  const printToken = nanoid(32);
+  const expiresAt = Date.now() + 60000; // 60 seconds
+  
+  printTokens.set(id, { token: printToken, expiresAt });
+  
+  // Clean up expired tokens periodically
+  setTimeout(() => {
+    printTokens.delete(id);
+  }, 60000);
+  
+  res.json({ success: true, printToken });
+});
+
+// Secure endpoint to decrypt and stream document
+// Requires a temporary print token (valid for 60 seconds)
+router.get('/decrypt/:jobId', (req, res) => {
+  const db = req.db;
+  const { jobId } = req.params;
+  const { printToken } = req.query;
+  
+  try {
+    // Validate temporary print token
+    const tokenData = printTokens.get(jobId);
+    if (!tokenData || tokenData.token !== printToken) {
+      return res.status(403).json({ error: 'Invalid or expired print token' });
+    }
+    
+    if (Date.now() > tokenData.expiresAt) {
+      printTokens.delete(jobId); // Clean up expired token
+      return res.status(403).json({ error: 'Print token has expired' });
+    }
+    
+    // Validate job exists
+    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    
+    // Fetch document from DB
+    const document = db.prepare('SELECT *, CASE WHEN isEncrypted IS NULL THEN 0 ELSE isEncrypted END AS isEncrypted FROM documents WHERE jobId = ?').get(jobId);
+    if (!document) return res.status(404).json({ error: 'Document not found' });
+    
+    let documentContent = document.content;
+    
+    // If document is encrypted, decrypt it before sending
+    if (document.isEncrypted) {
+      // Prepare the document object with IV and authTag for decryption
+      const encryptedDocument = {
+        content: document.content,
+        iv: document.iv,
+        authTag: document.authTag,
+        mimeType: document.mimeType,
+        filename: document.filename,
+        size: document.size,
+        createdAt: document.createdAt,
+        isEncrypted: document.isEncrypted
+      };
+      
+      try {
+        const decryptedDocument = extractDecryptedDocument(encryptedDocument);
+        documentContent = decryptedDocument.content;
+        
+        // Validate PDF header if it's a PDF
+        if (document.mimeType && document.mimeType.includes('pdf')) {
+          if (!isValidPDF(documentContent)) {
+            console.error('Decrypted content is not a valid PDF');
+            return res.status(500).json({ error: 'Decrypted content is not a valid document' });
+          }
+          console.log('PDF header validation passed');
+        }
+        
+        console.log('First 5 bytes after decryption:', documentContent.slice(0, 5));
+      } catch (decryptionError) {
+        console.error('Decryption failed:', decryptionError);
+        return res.status(500).json({ error: 'Decryption failed' });
+      }
+    }
+    
+    // Invalidate the print token after successful use (one-time use)
+    printTokens.delete(jobId);
+    
+    // Set proper response headers
+    res.setHeader('Content-Type', document.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(document.filename || 'document')}"`);
+    res.setHeader('Content-Length', documentContent.length);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Expires', '0');
+    
+    // Stream the decrypted document content
+    res.send(documentContent);
+    
+  } catch (err) {
+    console.error('Error in decrypt endpoint:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // View job document (single-use only)
@@ -383,7 +504,18 @@ router.post('/:id/view', (req, res) => {
       
       // If document is encrypted, decrypt it before sending
       if (document.isEncrypted) {
-        const decryptedDocument = extractDecryptedDocument(document);
+        // Prepare the document object with IV and authTag for decryption
+        const encryptedDocument = {
+          content: document.content,
+          iv: document.iv,
+          authTag: document.authTag,
+          mimeType: document.mimeType,
+          filename: document.filename,
+          size: document.size,
+          createdAt: document.createdAt,
+          isEncrypted: document.isEncrypted
+        };
+        const decryptedDocument = extractDecryptedDocument(encryptedDocument);
         documentContent = decryptedDocument.content;
       }
       

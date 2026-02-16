@@ -269,14 +269,14 @@ export const PrintJobProvider = ({ children }) => {
           const buffer = Buffer.from(uint8Array);
           
           try {
-            // Encrypt the file content
+            // Encrypt the file content using client-side encryption for local/offline storage
             const encryptedContent = encryptDocument(buffer);
             docData.encryptedContent = encryptedContent;
           } catch (encryptionError) {
             console.error('Encryption failed:', encryptionError);
             // Fallback to unencrypted storage if encryption fails
             docData.isEncrypted = false;
-            
+                    
             // Store as Data URL if file is small enough (< 2MB)
             if (jobData.file.size < 2 * 1024 * 1024) {
               const reader = new FileReader();

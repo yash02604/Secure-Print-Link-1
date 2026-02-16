@@ -1,8 +1,11 @@
 import CryptoJS from 'crypto-js';
 import { Buffer } from 'buffer';
 
+// Note: This is only used for offline/local encryption. Server-side uses AES-256-GCM with Node.js crypto module.
+
 // Generate a secret key for encryption/decryption
 // In production, this should be stored securely (e.g., environment variables, secure key management)
+// NOTE: This is only used for offline/local encryption. Server-side encryption uses AES-256-GCM.
 const SECRET_KEY = process.env.REACT_APP_ENCRYPTION_KEY || 'SecurePrintLinkDefaultSecretKey2023!'; 
 
 /**

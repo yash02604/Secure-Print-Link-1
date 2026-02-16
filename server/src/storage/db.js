@@ -67,6 +67,8 @@ export function createDb(dbPath) {
       size INTEGER,
       createdAt TEXT,
       isEncrypted INTEGER DEFAULT 0,
+      iv BLOB,
+      authTag BLOB,
       FOREIGN KEY(jobId) REFERENCES jobs(id) ON DELETE CASCADE
     );
 
