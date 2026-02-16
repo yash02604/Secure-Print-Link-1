@@ -890,31 +890,47 @@ const PrintRelease = () => {
     });
   };
 
-
-
   const handleViewDocument = async (job) => {
     try {
       // Import the API client properly
       const api = await import('../api/client').then(module => module.default);
       const token = new URLSearchParams(location.search).get('token');
       
-      // Request a temporary print token
-      const tokenResponse = await api.post(`/api/jobs/${job.id}/print-token`, {
-        token: token
-      });
-      
-      if (!tokenResponse.data.success || !tokenResponse.data.printToken) {
-        throw new Error('Failed to generate print token');
-      }
-      
-      // Construct the URL to the decrypted document using the temporary token
-      const viewUrl = `${api.defaults.baseURL}/api/jobs/decrypt/${job.id}?printToken=${tokenResponse.data.printToken}`;
-      
-      // Open the document in a new window for viewing
-      const viewWindow = window.open(viewUrl, '_blank');
-      
-      if (!viewWindow) {
-        toast.error('Popup blocked. Please allow popups for this site to view the document.');
+      // Try to request a temporary print token
+      try {
+        const tokenResponse = await api.post(`/api/jobs/${job.id}/print-token`, {
+          token: token
+        });
+        
+        if (!tokenResponse.data.success || !tokenResponse.data.printToken) {
+          throw new Error('Failed to generate print token');
+        }
+        
+        // Construct the URL to the decrypted document using the temporary token
+        const viewUrl = `${api.defaults.baseURL}/api/jobs/decrypt/${job.id}?printToken=${tokenResponse.data.printToken}`;
+        
+        // Open the document in a new window for viewing
+        const viewWindow = window.open(viewUrl, '_blank');
+        
+        if (!viewWindow) {
+          toast.error('Popup blocked. Please allow popups for this site to view the document.');
+        }
+      } catch (apiError) {
+        // Fallback to direct document viewing if server is not available
+        console.log('Server not available, using fallback method');
+        if (job.document?.dataUrl) {
+          // Create a temporary link to download/view the document
+          const link = document.createElement('a');
+          link.href = job.document.dataUrl;
+          link.download = job.document.name || 'document';
+          link.target = '_blank';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          toast.info('Document opened in new window. Use your browser\'s print function.');
+        } else {
+          toast.error('Document not available for viewing.');
+        }
       }
     } catch (error) {
       console.error('Error viewing document:', error);
@@ -928,29 +944,47 @@ const PrintRelease = () => {
       const api = await import('../api/client').then(module => module.default);
       const token = new URLSearchParams(location.search).get('token');
       
-      // Request a temporary print token
-      const tokenResponse = await api.post(`/api/jobs/${job.id}/print-token`, {
-        token: token
-      });
-      
-      if (!tokenResponse.data.success || !tokenResponse.data.printToken) {
-        throw new Error('Failed to generate print token');
-      }
-      
-      // Construct the URL to the decrypted document using the temporary token
-      const printUrl = `${api.defaults.baseURL}/api/jobs/decrypt/${job.id}?printToken=${tokenResponse.data.printToken}`;
-      
-      // Open the document in a new window for printing
-      const printWindow = window.open(printUrl, '_blank');
-      
-      if (printWindow) {
-        printWindow.addEventListener('load', () => {
-          setTimeout(() => {
-            printWindow.print();
-          }, 1000);
+      // Try to request a temporary print token
+      try {
+        const tokenResponse = await api.post(`/api/jobs/${job.id}/print-token`, {
+          token: token
         });
-      } else {
-        toast.error('Popup blocked. Please allow popups for this site to print the document.');
+        
+        if (!tokenResponse.data.success || !tokenResponse.data.printToken) {
+          throw new Error('Failed to generate print token');
+        }
+        
+        // Construct the URL to the decrypted document using the temporary token
+        const printUrl = `${api.defaults.baseURL}/api/jobs/decrypt/${job.id}?printToken=${tokenResponse.data.printToken}`;
+        
+        // Open the document in a new window for printing
+        const printWindow = window.open(printUrl, '_blank');
+        
+        if (printWindow) {
+          printWindow.addEventListener('load', () => {
+            setTimeout(() => {
+              printWindow.print();
+            }, 1000);
+          });
+        } else {
+          toast.error('Popup blocked. Please allow popups for this site to print the document.');
+        }
+      } catch (apiError) {
+        // Fallback to direct document printing if server is not available
+        console.log('Server not available, using fallback method for printing');
+        if (job.document?.dataUrl) {
+          // Create a temporary link to download/print the document
+          const link = document.createElement('a');
+          link.href = job.document.dataUrl;
+          link.download = job.document.name || 'document';
+          link.target = '_blank';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          toast.info('Document opened in new window. Use Ctrl+P to print.');
+        } else {
+          toast.error('Document not available for printing.');
+        }
       }
     } catch (error) {
       console.error('Error printing document:', error);
