@@ -79,6 +79,16 @@ export function createDb(dbPath) {
       FOREIGN KEY(documentId) REFERENCES documents(id) ON DELETE CASCADE
     );
     
+    CREATE TABLE IF NOT EXISTS encrypted_files (
+      id TEXT PRIMARY KEY,
+      filename TEXT NOT NULL,
+      encryptedData BLOB NOT NULL,
+      iv BLOB NOT NULL,
+      authTag BLOB NOT NULL,
+      mimeType TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    );
+    
     -- Job view logs for audit trail
     CREATE TABLE IF NOT EXISTS job_views (
       id TEXT PRIMARY KEY,
@@ -121,6 +131,7 @@ export function createDb(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_jobs_secureToken ON jobs(secureToken);
     CREATE INDEX IF NOT EXISTS idx_documents_jobId ON documents(jobId);
     CREATE INDEX IF NOT EXISTS idx_job_views_jobId ON job_views(jobId);
+    CREATE INDEX IF NOT EXISTS idx_encrypted_files_createdAt ON encrypted_files(createdAt);
     
     -- Chat indexes for performance
     CREATE INDEX IF NOT EXISTS idx_conversations_userId ON conversations(userId);

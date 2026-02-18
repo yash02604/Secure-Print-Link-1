@@ -1,8 +1,8 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:4000',
-  timeout: 30000, // 30 second timeout
+  baseURL: process.env.REACT_APP_API_URL || '',
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -11,6 +11,12 @@ const api = axios.create({
 // Request interceptor for adding auth tokens and logging
 api.interceptors.request.use(
   (config) => {
+    if (config.data instanceof FormData) {
+      if (config.headers && config.headers['Content-Type']) {
+        delete config.headers['Content-Type'];
+      }
+    }
+    
     // Add auth token if available
     const token = localStorage.getItem('securePrintToken');
     if (token) {

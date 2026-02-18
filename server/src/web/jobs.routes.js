@@ -4,6 +4,7 @@ import multer from 'multer';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -11,6 +12,48 @@ const uploadsDir = join(__dirname, '../../uploads');
 const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024) } });
 
 const router = Router();
+
+// Encryption helpers (AES-256-GCM with per-job keys)
+const getMasterKey = () => {
+  const rawKey = process.env.ENCRYPTION_KEY || 'default-encryption-key-change-me';
+  return crypto.createHash('sha256').update(rawKey).digest();
+};
+
+const deriveJobKey = (jobId) => {
+  const masterKey = getMasterKey();
+  return crypto.hkdfSync('sha256', masterKey, Buffer.from(jobId), 'secure-print-job', 32);
+};
+
+const encryptDocumentForJob = (buffer, jobId) => {
+  const key = deriveJobKey(jobId);
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encryptedData = Buffer.concat([cipher.update(buffer), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  // Layout: [iv (12 bytes)] [authTag (16 bytes)] [ciphertext]
+  return Buffer.concat([iv, authTag, encryptedData]);
+};
+
+const decryptDocumentForJob = (buffer, jobId) => {
+  // Backwards compatibility: if buffer is too small to contain iv + tag, treat as plaintext
+  if (!buffer || buffer.length < 28) {
+    return buffer;
+  }
+
+  const key = deriveJobKey(jobId);
+  const iv = buffer.subarray(0, 12);
+  const authTag = buffer.subarray(12, 28);
+  const encryptedData = buffer.subarray(28);
+
+  try {
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(encryptedData), decipher.final()]);
+  } catch (err) {
+    console.error('Failed to decrypt document for job, falling back to raw content:', jobId, err);
+    return buffer;
+  }
+};
 
 // In-memory storage for expiration metadata (server memory - lost on restart by design)
 // SECURITY MODEL: Single-use view enforcement
@@ -116,7 +159,7 @@ router.post('/', (req, res, next) => {
       token: secureToken,
       viewCount: 0,
       firstViewedAt: null,
-      filePath: req.file?.path || null,
+      filePath: null,
       mimetype: req.file?.mimetype,
       originalname: req.file?.originalname
     });
@@ -148,18 +191,21 @@ router.post('/', (req, res, next) => {
       expiresAt: new Date(expiresAt).toISOString()
     });
 
-    // Store document in DB and run analysis
+    // Store encrypted document in DB and run analysis (length-based, no plaintext at rest)
     if (req.file) {
       const documentId = nanoid();
       const fileContent = fs.readFileSync(req.file.path);
+
+      // Encrypt the document content using per-job key
+      const encryptedContent = encryptDocumentForJob(fileContent, id);
       
       db.prepare(`INSERT INTO documents (
         id, jobId, content, mimeType, filename, size, createdAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        documentId, id, fileContent, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString()
+        documentId, id, encryptedContent, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString()
       );
 
-      // Mock Document Analysis
+      // Mock Document Analysis (estimated from original file size only, no plaintext stored)
       const analysisId = nanoid();
       const analysisResult = {
         wordCount: Math.floor(fileContent.length / 6),
@@ -173,6 +219,15 @@ router.post('/', (req, res, next) => {
       ) VALUES (?, ?, ?, ?, ?, ?)`).run(
         analysisId, documentId, 'basic_metrics', JSON.stringify(analysisResult), 'completed', new Date().toISOString()
       );
+
+      // Delete uploaded plaintext file from disk as soon as we've processed it
+      try {
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (err) {
+        console.error('Error deleting temporary upload file:', err);
+      }
     }
 
     res.json({
@@ -239,11 +294,13 @@ router.get('/:id', (req, res) => {
     });
   }
 
-  // Fetch document from DB if available
+  // Fetch document metadata and analysis from DB
   try {
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      const base64 = document.content.toString('base64');
+      // Decrypt content in memory for preview (document is stored encrypted at rest)
+      const decryptedBuffer = decryptDocumentForJob(document.content, id);
+      const base64 = decryptedBuffer.toString('base64');
       job.document = {
         dataUrl: `data:${document.mimeType};base64,${base64}`,
         mimeType: document.mimeType,
@@ -257,7 +314,7 @@ router.get('/:id', (req, res) => {
         job.analysis = JSON.parse(analysis.result);
       }
     } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
-      // Fallback to filesystem if not in DB (for older jobs or if DB storage failed)
+      // Fallback to filesystem if not in DB (for very old jobs)
       try {
         const fileBuffer = fs.readFileSync(metadata.filePath);
         const base64 = fileBuffer.toString('base64');
@@ -360,7 +417,9 @@ router.post('/:id/view', (req, res) => {
     let documentData = null;
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      const base64 = document.content.toString('base64');
+      // Decrypt content in memory for preview, document is stored encrypted at rest
+      const decryptedBuffer = decryptDocumentForJob(document.content, id);
+      const base64 = decryptedBuffer.toString('base64');
       documentData = {
         dataUrl: `data:${document.mimeType};base64,${base64}`,
         mimeType: document.mimeType,

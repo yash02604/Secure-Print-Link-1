@@ -13,6 +13,8 @@ import chatRouter from './web/chat.routes.js';
 import fs from 'fs';
 import { nanoid } from 'nanoid';
 import crypto from 'crypto';
+import multer from 'multer';
+import { Readable } from 'stream';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -36,10 +38,119 @@ app.use(morgan('dev'));
 const db = createDb(join(__dirname, '../data/secureprint.db'));
 app.set('db', db);
 
+const MAX_UPLOAD_BYTES = +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_BYTES }
+});
+
+const getMasterKey = () => {
+  const rawKey = process.env.ENCRYPTION_KEY || 'default-encryption-key-change-me';
+  return crypto.createHash('sha256').update(rawKey).digest();
+};
+
+const deriveFileKey = (fileId) => {
+  const masterKey = getMasterKey();
+  return crypto.hkdfSync('sha256', masterKey, Buffer.from(fileId), 'secure-file-encryption', 32);
+};
+
+const authMiddleware = (req, res, next) => {
+  const userId = req.headers['x-user-id'] || req.query.userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  req.user = { id: String(userId) };
+  next();
+};
+
 // routes
 app.use('/api/jobs', (req, res, next) => { req.db = db; next(); }, jobsRouter);
 app.use('/api/printers', (req, res, next) => { req.db = db; next(); }, printersRouter);
 app.use('/api/chat', (req, res, next) => { req.db = db; next(); }, chatRouter);
+
+app.post('/upload', authMiddleware, upload.single('file'), (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'File is required' });
+    }
+
+    const allowedMimeTypes = new Set([
+      'application/pdf',
+      'image/jpeg',
+      'image/png'
+    ]);
+
+    if (!allowedMimeTypes.has(req.file.mimetype)) {
+      return res.status(400).json({ error: 'Only PDF, JPG, and PNG files are allowed' });
+    }
+
+    const fileId = nanoid();
+    const fileKey = deriveFileKey(fileId);
+    const iv = crypto.randomBytes(12);
+
+    const cipher = crypto.createCipheriv('aes-256-gcm', fileKey, iv);
+    const encryptedData = Buffer.concat([cipher.update(req.file.buffer), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+
+    db.prepare(`
+      INSERT INTO encrypted_files (id, filename, encryptedData, iv, authTag, mimeType, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      fileId,
+      req.file.originalname,
+      encryptedData,
+      iv,
+      authTag,
+      req.file.mimetype,
+      new Date().toISOString()
+    );
+
+    res.json({
+      id: fileId,
+      filename: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/decrypt/:id', authMiddleware, (req, res, next) => {
+  const { id } = req.params;
+
+  try {
+    const record = db.prepare('SELECT * FROM encrypted_files WHERE id = ?').get(id);
+    if (!record) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    const fileKey = deriveFileKey(id);
+    const iv = record.iv;
+    const authTag = record.authTag;
+    const encryptedData = record.encryptedData;
+
+    const decipher = crypto.createDecipheriv('aes-256-gcm', fileKey, iv);
+    decipher.setAuthTag(authTag);
+
+    const decryptedBuffer = Buffer.concat([
+      decipher.update(encryptedData),
+      decipher.final()
+    ]);
+
+    res.setHeader('Content-Type', record.mimeType);
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${encodeURIComponent(record.filename)}"`
+    );
+    res.setHeader('Content-Length', decryptedBuffer.length);
+    res.setHeader('Cache-Control', 'no-store');
+
+    Readable.from(decryptedBuffer).pipe(res);
+  } catch (err) {
+    next(err);
+  }
+});
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -209,5 +320,4 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Socket.IO enabled for real-time chat`);
 });
-
 

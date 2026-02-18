@@ -5,6 +5,7 @@ import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 import { usePrintJob } from '../context/PrintJobContext';
 import { QRCodeCanvas } from 'qrcode.react';
+import api from '../api/client';
 import { 
   FaUpload, 
   FaFileAlt, 
@@ -623,7 +624,6 @@ const PrintJobSubmission = () => {
           <h1>Submit Print Job</h1>
           <p>Upload your document and configure print settings securely</p>
         </PageHeader>
-
         <SubmissionCard>
           <StepIndicator active={currentStep}>
             <div className="step">
