@@ -4,8 +4,6 @@ import multer from 'multer';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import crypto from 'crypto';
-import { createEncryptedDocument, extractDecryptedDocument, isValidPDF, generatePrintToken, ENCRYPTION_KEY } from '../utils/crypto.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -155,13 +153,10 @@ router.post('/', (req, res, next) => {
       const documentId = nanoid();
       const fileContent = fs.readFileSync(req.file.path);
       
-      // Encrypt the document content before storing
-      const encryptedDocument = createEncryptedDocument(fileContent, req.file.mimetype, req.file.originalname, req.file.size);
-      
       db.prepare(`INSERT INTO documents (
-        id, jobId, content, mimeType, filename, size, createdAt, isEncrypted, iv, authTag
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        documentId, id, encryptedDocument.content, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString(), encryptedDocument.isEncrypted ? 1 : 0, encryptedDocument.iv, encryptedDocument.authTag
+        id, jobId, content, mimeType, filename, size, createdAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        documentId, id, fileContent, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString()
       );
 
       // Mock Document Analysis
@@ -246,44 +241,15 @@ router.get('/:id', (req, res) => {
 
   // Fetch document from DB if available
   try {
-    const document = db.prepare('SELECT *, CASE WHEN isEncrypted IS NULL THEN 0 ELSE isEncrypted END AS isEncrypted FROM documents WHERE jobId = ?').get(id);
+    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      let documentContent = document.content;
-      console.log('Document found:', document.id);
-      console.log('Document is encrypted:', document.isEncrypted);
-      
-      // If document is encrypted, decrypt it before sending
-      if (document.isEncrypted) {
-        console.log('Decrypting document with IV:', document.iv, 'and authTag:', document.authTag);
-        // Prepare the document object with IV and authTag for decryption
-        const encryptedDocument = {
-          content: document.content,
-          iv: document.iv,
-          authTag: document.authTag,
-          mimeType: document.mimeType,
-          filename: document.filename,
-          size: document.size,
-          createdAt: document.createdAt,
-          isEncrypted: document.isEncrypted
-        };
-        const decryptedDocument = extractDecryptedDocument(encryptedDocument);
-        documentContent = decryptedDocument.content;
-        console.log('Decryption successful, content length:', documentContent.length);
-      }
-      
-      const base64 = documentContent.toString('base64');
-      console.log('Base64 content length:', base64.length);
+      const base64 = document.content.toString('base64');
       job.document = {
         dataUrl: `data:${document.mimeType};base64,${base64}`,
         mimeType: document.mimeType,
         name: document.filename,
-        size: document.size,
-        // Include encryption info for client-side handling if needed
-        isEncrypted: document.isEncrypted,
-        // Don't include the encrypted content in the response to avoid double processing
-        encryptedContent: undefined
+        size: document.size
       };
-      console.log('Job document created:', job.document);
       
       // Fetch analysis
       const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
@@ -300,10 +266,7 @@ router.get('/:id', (req, res) => {
         job.document = {
           dataUrl,
           mimeType: metadata.mimetype,
-          name: metadata.originalname || job.documentName,
-          // Filesystem documents are not marked as encrypted
-          isEncrypted: false,
-          encryptedContent: undefined
+          name: metadata.originalname || job.documentName
         };
       } catch (err) {
         console.error('Error reading file for job:', id, err);
@@ -314,205 +277,6 @@ router.get('/:id', (req, res) => {
   }
 
   res.json({ job });
-});
-
-// Temporary print tokens storage (in production, use Redis or similar)
-const printTokens = new Map(); // jobId -> { token, expiresAt, used, createdAt, clientIP }
-
-// Create a temporary print token
-router.post('/:id/print-token', (req, res) => {
-  const db = req.db;
-  const { id } = req.params;
-  const { token } = req.body || {};
-
-  try {
-    // Validate job exists
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) {
-      console.log(`[AUDIT] Job not found for ID: ${id}`);
-      return res.status(404).json({ error: 'Job not found' });
-    }
-    
-    if (!token || token !== job.secureToken) {
-      console.log(`[AUDIT] Invalid token attempt for job ID: ${id}`);
-      return res.status(403).json({ error: 'Invalid token' });
-    }
-    
-    // Check if job has expired
-    const now = Date.now();
-    const createdAt = new Date(job.createdAt).getTime();
-    const expiresAt = createdAt + (job.expiryHours || 24) * 60 * 60 * 1000; // Default to 24 hours
-    
-    if (now > expiresAt) {
-      console.log(`[AUDIT] Attempt to access expired job ID: ${id}`);
-      return res.status(410).json({ error: 'This print link has expired' });
-    }
-    
-    // Rate limiting: Check if too many token requests from same IP
-    const clientIP = req.ip || 
-                     req.connection.remoteAddress || 
-                     req.socket.remoteAddress || 
-                     (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0] : 'unknown');
-    const recentRequests = Array.from(printTokens.values()).filter(tokenInfo => 
-      tokenInfo.clientIP === clientIP && 
-      Date.now() - tokenInfo.createdAt < 60000 // within last minute
-    );
-    
-    if (recentRequests.length > 10) { // Allow max 10 requests per minute per IP
-      console.log(`[AUDIT] Rate limit exceeded for IP: ${clientIP}`);
-      return res.status(429).json({ error: 'Too many requests, please try again later' });
-    }
-    
-    // Generate a temporary print token (valid for 60 seconds)
-    const printToken = generatePrintToken();
-    const tokenExpiry = Date.now() + 60000; // 60 seconds
-    
-    printTokens.set(id, { 
-      token: printToken, 
-      expiresAt: tokenExpiry, 
-      used: false,
-      createdAt: Date.now(),
-      clientIP: clientIP
-    });
-    
-    console.log(`[AUDIT] Print token created for job ID: ${id}`);
-    
-    // Clean up expired tokens periodically
-    setTimeout(() => {
-      const tokenData = printTokens.get(id);
-      if (tokenData && Date.now() >= tokenData.expiresAt) {
-        printTokens.delete(id);
-      }
-    }, 60000);
-    
-    res.json({ success: true, printToken });
-  } catch (error) {
-    console.error('[AUDIT] Error creating print token:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Secure endpoint to decrypt and stream document
-// Requires a temporary print token (valid for 60 seconds and single use)
-router.get('/decrypt/:jobId', (req, res) => {
-  const db = req.db;
-  const { jobId } = req.params;
-  const { printToken } = req.query;
-
-  try {
-    // Validate printToken exists
-    if (!printToken) {
-      console.log(`[AUDIT] Missing print token for job ID: ${jobId}`);
-      return res.status(400).json({ error: 'Print token is required' });
-    }
-    
-    // Validate temporary print token
-    const tokenData = printTokens.get(jobId);
-    if (!tokenData) {
-      console.log(`[AUDIT] No token found for job ID: ${jobId}`);
-      return res.status(403).json({ error: 'Invalid print token' });
-    }
-    
-    // Check if token has expired
-    if (Date.now() > tokenData.expiresAt) {
-      printTokens.delete(jobId); // Clean up expired token
-      console.log(`[AUDIT] Expired token attempt for job ID: ${jobId}`);
-      return res.status(403).json({ error: 'Print token has expired' });
-    }
-    
-    // Check if token has already been used (prevent replay attacks)
-    if (tokenData.used) {
-      printTokens.delete(jobId); // Clean up used token
-      console.log(`[AUDIT] Reused token attempt for job ID: ${jobId}`);
-      return res.status(403).json({ error: 'Print token has already been used' });
-    }
-    
-    // Mark token as used immediately to prevent reuse
-    tokenData.used = true;
-
-    // Validate job exists
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
-    if (!job) {
-      printTokens.delete(jobId); // Clean up token
-      console.log(`[AUDIT] Job not found for ID: ${jobId}`);
-      return res.status(404).json({ error: 'Job not found' });
-    }
-    
-    // Check if job has expired
-    const now = Date.now();
-    const jobCreatedAt = new Date(job.createdAt).getTime();
-    const jobExpiresAt = jobCreatedAt + (job.expiryHours || 24) * 60 * 60 * 1000; // Default to 24 hours
-    
-    if (now > jobExpiresAt) {
-      printTokens.delete(jobId); // Clean up token
-      console.log(`[AUDIT] Attempt to access expired job ID: ${jobId}`);
-      return res.status(410).json({ error: 'This print link has expired' });
-    }
-    
-    // Fetch document from DB
-    const document = db.prepare('SELECT *, CASE WHEN isEncrypted IS NULL THEN 0 ELSE isEncrypted END AS isEncrypted FROM documents WHERE jobId = ?').get(jobId);
-    if (!document) {
-      printTokens.delete(jobId); // Clean up token
-      console.log(`[AUDIT] Document not found for job ID: ${jobId}`);
-      return res.status(404).json({ error: 'Document not found' });
-    }
-    
-    let documentContent = document.content;
-
-    // If document is encrypted, decrypt it before sending
-    if (document.isEncrypted) {
-      try {
-        // Create decipher with AES-256-GCM
-        const decipher = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, Buffer.from(document.iv));
-        decipher.setAuthTag(Buffer.from(document.authTag));
-        
-        let decrypted = decipher.update(Buffer.from(document.content));
-        decrypted = Buffer.concat([decrypted, decipher.final()]);
-        
-        documentContent = decrypted;
-
-        // Validate PDF header if it's a PDF
-        if (document.mimeType && document.mimeType.includes('pdf')) {
-          if (!isValidPDF(documentContent)) {
-            console.error('[AUDIT] Decryption failed - invalid PDF content for job ID:', jobId);
-            printTokens.delete(jobId); // Clean up token
-            return res.status(403).json({ error: 'Decryption failed - invalid content' });
-          }
-          console.log('PDF header validation passed for job ID:', jobId);
-        }
-
-        console.log('First 5 bytes after decryption for job ID', jobId, ':', documentContent.slice(0, 5));
-      } catch (decryptionError) {
-        console.error('[AUDIT] Decryption failed for job ID:', jobId, decryptionError);
-        printTokens.delete(jobId); // Clean up token
-        return res.status(403).json({ error: 'Decryption failed - authentication error' });
-      }
-    }
-    
-    console.log(`[AUDIT] Document decrypted successfully for job ID: ${jobId}`);
-
-    // Set proper response headers
-    res.setHeader('Content-Type', document.mimeType || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(document.filename || 'document')}"`);
-    res.setHeader('Content-Length', documentContent.length);
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-
-    // Stream the decrypted document content
-    res.send(documentContent);
-
-    // Clean up token after successful response
-    setTimeout(() => {
-      printTokens.delete(jobId);
-    }, 1000); // Small delay to ensure response is sent
-
-  } catch (err) {
-    console.error('[AUDIT] Error in decrypt endpoint:', err);
-    // Clean up token on error
-    printTokens.delete(jobId);
-    res.status(500).json({ error: 'Internal server error' });
-  }
 });
 
 // View job document (single-use only)
@@ -594,37 +358,14 @@ router.post('/:id/view', (req, res) => {
 
     // Return document data for preview (NOT download)
     let documentData = null;
-    const document = db.prepare('SELECT *, CASE WHEN isEncrypted IS NULL THEN 0 ELSE isEncrypted END AS isEncrypted FROM documents WHERE jobId = ?').get(id);
+    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      let documentContent = document.content;
-      
-      // If document is encrypted, decrypt it before sending
-      if (document.isEncrypted) {
-        // Prepare the document object with IV and authTag for decryption
-        const encryptedDocument = {
-          content: document.content,
-          iv: document.iv,
-          authTag: document.authTag,
-          mimeType: document.mimeType,
-          filename: document.filename,
-          size: document.size,
-          createdAt: document.createdAt,
-          isEncrypted: document.isEncrypted
-        };
-        const decryptedDocument = extractDecryptedDocument(encryptedDocument);
-        documentContent = decryptedDocument.content;
-      }
-      
-      const base64 = documentContent.toString('base64');
+      const base64 = document.content.toString('base64');
       documentData = {
         dataUrl: `data:${document.mimeType};base64,${base64}`,
         mimeType: document.mimeType,
         name: document.filename,
-        size: document.size,
-        // Include encryption info for client-side handling if needed
-        isEncrypted: document.isEncrypted,
-        // Don't include the encrypted content in the response to avoid double processing
-        encryptedContent: undefined
+        size: document.size
       };
     } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
       const fileBuffer = fs.readFileSync(metadata.filePath);
@@ -632,10 +373,7 @@ router.post('/:id/view', (req, res) => {
       documentData = {
         dataUrl: `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`,
         mimeType: metadata.mimetype,
-        name: metadata.originalname || job.documentName,
-        // Filesystem documents are not marked as encrypted
-        isEncrypted: false,
-        encryptedContent: undefined
+        name: metadata.originalname || job.documentName
       };
     }
 

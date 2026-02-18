@@ -1,8 +1,6 @@
 import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
 import api from '../api/client';
 import { toast } from 'react-toastify';
-import { encryptDocument } from '../utils/encryption';
-import { Buffer } from 'buffer';
 
 const PrintJobContext = createContext();
 
@@ -48,56 +46,16 @@ export const PrintJobProvider = ({ children }) => {
 
       // Load from localStorage FIRST as initial state
       try {
-        const savedJobs = localStorage.getItem('printJobs');
-        if (savedJobs) {
-          const parsedJobs = JSON.parse(savedJobs);
+        const localJobs = localStorage.getItem('securePrintJobs');
+        if (localJobs) {
+          const parsedJobs = JSON.parse(localJobs);
           setPrintJobs(parsedJobs);
           syncMetadataFromJobs(parsedJobs);
+          console.log('Loaded from localStorage:', parsedJobs.length, 'jobs');
         }
-      } catch (err) {
-        console.warn('Failed to load jobs from localStorage:', err);
+      } catch (e) {
+        console.warn('Failed to load jobs from localStorage', e);
       }
-
-      // Add a test job for debugging
-      const testJob = {
-        id: 'test_job_1',
-        userId: 1,
-        userName: 'Test User',
-        documentName: 'Test Document',
-        pages: 1,
-        copies: 1,
-        color: 'black-white',
-        duplex: 'one-sided',
-        stapling: 'none',
-        priority: 'normal',
-        notes: 'Test job for debugging',
-        status: 'pending',
-        cost: 0.10,
-        submittedAt: new Date().toISOString(),
-        secureToken: 'test_token_123',
-        releaseLink: 'http://localhost:3000/release/test_job_1?token=test_token_123',
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour from now
-        viewCount: 0,
-        document: {
-          dataUrl: 'data:text/plain;base64,SGVsbG8gV29ybGQh', // "Hello World!" in base64
-          mimeType: 'text/plain',
-          name: 'test.txt',
-          size: 12,
-          isEncrypted: false
-        }
-      };
-
-      setPrintJobs(prev => {
-        // Only add test job if it doesn't already exist
-        if (!prev.some(job => job.id === 'test_job_1')) {
-          const newJobs = [testJob, ...prev];
-          localStorage.setItem('printJobs', JSON.stringify(newJobs));
-          return newJobs;
-        }
-        return prev;
-      });
-
-      syncMetadataFromJobs([testJob]);
 
       try {
         const [jobsResponse, printersResponse] = await Promise.all([
@@ -299,33 +257,17 @@ export const PrintJobProvider = ({ children }) => {
             filename: jobData.file.name,
             originalname: jobData.file.name,
             mimetype: jobData.file.type,
-            size: jobData.file.size,
-            isEncrypted: true
+            size: jobData.file.size
           };
 
-          // Read file as ArrayBuffer for encryption
-          const arrayBuffer = await jobData.file.arrayBuffer();
-          const uint8Array = new Uint8Array(arrayBuffer);
-          const buffer = Buffer.from(uint8Array);
-          
-          try {
-            // Encrypt the file content using client-side encryption for local/offline storage
-            const encryptedContent = encryptDocument(buffer);
-            docData.encryptedContent = encryptedContent;
-          } catch (encryptionError) {
-            console.error('Encryption failed:', encryptionError);
-            // Fallback to unencrypted storage if encryption fails
-            docData.isEncrypted = false;
-                    
-            // Store as Data URL if file is small enough (< 2MB)
-            if (jobData.file.size < 2 * 1024 * 1024) {
-              const reader = new FileReader();
-              const dataUrl = await new Promise((resolve) => {
-                reader.onload = (e) => resolve(e.target.result);
-                reader.readAsDataURL(jobData.file);
-              });
-              docData.dataUrl = dataUrl;
-            }
+          // Store as Data URL if file is small enough (< 2MB)
+          if (jobData.file.size < 2 * 1024 * 1024) {
+            const reader = new FileReader();
+            const dataUrl = await new Promise((resolve) => {
+              reader.onload = (e) => resolve(e.target.result);
+              reader.readAsDataURL(jobData.file);
+            });
+            docData.dataUrl = dataUrl;
           }
         }
 
@@ -400,40 +342,12 @@ export const PrintJobProvider = ({ children }) => {
         throw new Error('Document already viewed');
       }
 
-      // If the document is encrypted, decrypt it before returning
-      // Only decrypt if it's not already decrypted (i.e., if no dataUrl exists)
-      let returnDocument = job?.document;
-      if (job?.document?.isEncrypted && job.document.encryptedContent && !job.document.dataUrl) {
-        try {
-          // Import decryption function
-          const { decryptDocument } = await import('../utils/encryption');
-          
-          // Decrypt the content
-          const decryptedBuffer = decryptDocument(job.document.encryptedContent);
-          
-          // Convert to data URL for preview
-          const uint8Array = new Uint8Array(decryptedBuffer);
-          const base64 = btoa(String.fromCharCode.apply(null, uint8Array));
-          const dataUrl = `data:${job.document.mimetype || 'application/octet-stream'};base64,${base64}`;
-          
-          returnDocument = {
-            ...job.document,
-            dataUrl,
-            content: decryptedBuffer
-          };
-        } catch (decryptionError) {
-          console.error('Decryption failed:', decryptionError);
-          toast.error('Failed to decrypt document');
-          throw new Error('Failed to decrypt document');
-        }
-      }
-
       setPrintJobs(prev => prev.map(j => 
         j.id === jobId ? { ...j, viewCount: 1, firstViewedAt: now, lastViewedAt: now } : j
       ));
 
       toast.success('Document preview opened (Local)');
-      return returnDocument;
+      return job?.document;
     }
 
     setLoading(true);
