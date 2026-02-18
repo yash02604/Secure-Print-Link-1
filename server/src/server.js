@@ -10,6 +10,7 @@ import { createDb } from './storage/db.js';
 import jobsRouter from './web/jobs.routes.js';
 import printersRouter from './web/printers.routes.js';
 import chatRouter from './web/chat.routes.js';
+import authRouter from './web/auth.routes.js';
 import fs from 'fs';
 import { nanoid } from 'nanoid';
 import crypto from 'crypto';
@@ -64,6 +65,7 @@ const authMiddleware = (req, res, next) => {
 };
 
 // routes
+app.use('/api/auth', (req, res, next) => { req.db = db; next(); }, authRouter);
 app.use('/api/jobs', (req, res, next) => { req.db = db; next(); }, jobsRouter);
 app.use('/api/printers', (req, res, next) => { req.db = db; next(); }, printersRouter);
 app.use('/api/chat', (req, res, next) => { req.db = db; next(); }, chatRouter);
@@ -320,4 +322,3 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Socket.IO enabled for real-time chat`);
 });
-

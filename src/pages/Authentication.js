@@ -474,7 +474,7 @@ const DemoCredentials = styled.div`
 
 const Authentication = () => {
   const navigate = useNavigate();
-  const { login, loginWithPin } = useAuth();
+  const { login, loginWithPin, signup, loginWithGoogle } = useAuth();
   const [activeTab, setActiveTab] = useState('credentials');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -495,6 +495,68 @@ const Authentication = () => {
     timestamp: Date.now(),
     sessionId: Math.random().toString(36).substr(2, 9)
   });
+
+  // Sign Up form
+  const [signUpData, setSignUpData] = useState({
+    name: '',
+    email: '',
+    username: '',
+    password: ''
+  });
+
+  // Google Sign-In
+  const [googleReady, setGoogleReady] = useState(false);
+  const googleBtnRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID;
+    if (!clientId) return;
+    // Load Google Identity Services script
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      setGoogleReady(true);
+      // Initialize and render button
+      /* global google */
+      if (window.google && google.accounts && google.accounts.id) {
+        google.accounts.id.initialize({
+          client_id: clientId,
+          callback: async (response) => {
+            const idToken = response.credential;
+            try {
+              setLoading(true);
+              await loginWithGoogle(idToken);
+              toast.success('Login successful!');
+              navigate('/');
+            } catch (error) {
+              toast.error(error.message);
+            } finally {
+              setLoading(false);
+            }
+          }
+        });
+        if (googleBtnRef.current) {
+          google.accounts.id.renderButton(googleBtnRef.current, {
+            theme: 'outline',
+            size: 'large',
+            type: 'standard',
+            shape: 'rectangular',
+            text: 'signin_with',
+          });
+        }
+      }
+    };
+    document.head.appendChild(script);
+    return () => {
+      // Cleanup script and disable auto prompt if needed
+      if (window.google && google.accounts && google.accounts.id) {
+        try { google.accounts.id.cancel(); } catch (_) {}
+      }
+      document.head.removeChild(script);
+    };
+  }, [loginWithGoogle, navigate]);
 
   const handleCredentialsSubmit = async (e) => {
     e.preventDefault();
@@ -603,6 +665,18 @@ const Authentication = () => {
             >
               QR Code
             </TabButton>
+            <TabButton 
+              active={activeTab === 'signup'} 
+              onClick={() => setActiveTab('signup')}
+            >
+              Sign Up
+            </TabButton>
+            <TabButton 
+              active={activeTab === 'google'} 
+              onClick={() => setActiveTab('google')}
+            >
+              Google
+            </TabButton>
           </AuthTabs>
 
           {activeTab === 'credentials' && (
@@ -685,6 +759,96 @@ const Authentication = () => {
                   Open the Secure Print Link mobile app and scan this QR code to authenticate automatically.
                 </div>
               </QRCodeSection>
+            </div>
+          )}
+
+          {activeTab === 'signup' && (
+            <Form onSubmit={async (e) => {
+              e.preventDefault();
+              setLoading(true);
+              try {
+                await signup(signUpData);
+                toast.success('Account created! Signed in securely.');
+                navigate('/');
+              } catch (error) {
+                toast.error(error.message);
+              } finally {
+                setLoading(false);
+              }
+            }}>
+              <FormGroup>
+                <label>Name</label>
+                <InputWrapper>
+                  <FaUser className="input-icon" />
+                  <Input
+                    type="text"
+                    placeholder="Enter your name"
+                    value={signUpData.name}
+                    onChange={(e) => setSignUpData(prev => ({ ...prev, name: e.target.value }))}
+                    required
+                  />
+                </InputWrapper>
+              </FormGroup>
+              <FormGroup>
+                <label>Email</label>
+                <InputWrapper>
+                  <FaUser className="input-icon" />
+                  <Input
+                    type="email"
+                    placeholder="Enter your email"
+                    value={signUpData.email}
+                    onChange={(e) => setSignUpData(prev => ({ ...prev, email: e.target.value }))}
+                    required
+                  />
+                </InputWrapper>
+              </FormGroup>
+              <FormGroup>
+                <label>Username</label>
+                <InputWrapper>
+                  <FaUser className="input-icon" />
+                  <Input
+                    type="text"
+                    placeholder="Choose a username"
+                    value={signUpData.username}
+                    onChange={(e) => setSignUpData(prev => ({ ...prev, username: e.target.value }))}
+                    required
+                  />
+                </InputWrapper>
+              </FormGroup>
+              <FormGroup>
+                <label>Password</label>
+                <InputWrapper>
+                  <FaLock className="input-icon" />
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Create a password"
+                    value={signUpData.password}
+                    onChange={(e) => setSignUpData(prev => ({ ...prev, password: e.target.value }))}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="toggle-password"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? <FaEyeSlash /> : <FaEye />}
+                  </button>
+                </InputWrapper>
+              </FormGroup>
+              <LoginButton type="submit" disabled={loading}>
+                {loading ? 'Creating Account...' : 'Sign Up'}
+              </LoginButton>
+            </Form>
+          )}
+
+          {activeTab === 'google' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div ref={googleBtnRef} />
+              {!googleReady && (
+                <div style={{ color: '#666', fontSize: '14px' }}>
+                  Google Sign‑In requires configuration. Set REACT_APP_GOOGLE_CLIENT_ID in your environment.
+                </div>
+              )}
             </div>
           )}
 

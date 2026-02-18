@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import CryptoJS from 'crypto-js';
+import api from '../api/client';
 
 const AuthContext = createContext();
 
@@ -66,11 +67,22 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = async (username, password) => {
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Try backend login first
+    try {
+      const response = await api.post('/api/auth/login', { username, password });
+      if (response.data?.success && response.data?.user) {
+        const user = response.data.user;
+        setCurrentUser(user);
+        setIsAuthenticated(true);
+        localStorage.setItem('securePrintUser', JSON.stringify(user));
+        return { success: true, user };
+      }
+    } catch (err) {
+      // Fallback to mock users
+    }
     
+    await new Promise(resolve => setTimeout(resolve, 500));
     const user = mockUsers.find(u => u.username === username && u.password === password);
-    
     if (user) {
       const { password: _, ...userWithoutPassword } = user;
       setCurrentUser(userWithoutPassword);
@@ -113,12 +125,38 @@ export const AuthProvider = ({ children }) => {
     return CryptoJS.lib.WordArray.random(32).toString();
   };
 
+  const signup = async ({ username, password, name, email }) => {
+    const response = await api.post('/api/auth/signup', { username, password, name, email });
+    if (response.data?.success && response.data?.user) {
+      const user = response.data.user;
+      setCurrentUser(user);
+      setIsAuthenticated(true);
+      localStorage.setItem('securePrintUser', JSON.stringify(user));
+      return { success: true, user };
+    }
+    throw new Error(response.data?.error || 'Failed to sign up');
+  };
+
+  const loginWithGoogle = async (idToken) => {
+    const response = await api.post('/api/auth/google', { idToken });
+    if (response.data?.success && response.data?.user) {
+      const user = response.data.user;
+      setCurrentUser(user);
+      setIsAuthenticated(true);
+      localStorage.setItem('securePrintUser', JSON.stringify(user));
+      return { success: true, user };
+    }
+    throw new Error(response.data?.error || 'Failed to login with Google');
+  };
+
   const value = {
     currentUser,
     isAuthenticated,
     loading,
     login,
     loginWithPin,
+    signup,
+    loginWithGoogle,
     logout,
     updateUser,
     generateSecureToken,
