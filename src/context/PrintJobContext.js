@@ -234,7 +234,7 @@ export const PrintJobProvider = ({ children }) => {
           return newMap;
         });
 
-        toast.success('Print job submitted successfully!');
+        toast.success('Your document was encrypted and submitted securely.');
       }
     } catch (error) {
       console.warn('API submission failed, falling back to local storage:', error.message);
