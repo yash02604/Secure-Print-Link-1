@@ -12,6 +12,7 @@ import {
   FaChartBar
 } from 'react-icons/fa';
 import { useParams, useLocation } from 'react-router-dom';
+import { useUser } from '@clerk/clerk-react';
 
 const ReleaseContainer = styled.div`
   padding: 20px;
@@ -370,7 +371,8 @@ const EmptyState = styled.div`
 
 const PrintRelease = () => {
   const { loginWithPin, mockUsers } = useAuth();
-  const { printJobs, releasePrintJob, printers, validateTokenAndExpiration } = usePrintJob();
+  const { user } = useUser();
+  const { printJobs, releasePrintJob, viewPrintJob, printers, validateTokenAndExpiration } = usePrintJob();
   const params = useParams();
   const location = useLocation();
   const [authMethod, setAuthMethod] = useState(null);
@@ -383,6 +385,17 @@ const PrintRelease = () => {
   const [autoPrintDone, setAutoPrintDone] = useState(false);
   const [printedViaIframe, setPrintedViaIframe] = useState(false);
   const [serverJob, setServerJob] = useState(null);
+  
+  useEffect(() => {
+    if (user && !authenticatedUser) {
+      setAuthenticatedUser({
+        id: user.id,
+        name: user.fullName || user.username || 'User',
+        role: 'User',
+        department: 'General'
+      });
+    }
+  }, [user, authenticatedUser]);
   
   // SECURITY: Multi-use support - track releases per session, NOT globally
   // - releasingRef prevents duplicate calls during same render cycle (React StrictMode)
@@ -425,7 +438,7 @@ const PrintRelease = () => {
         }
         
         // API not available - use client-side validation (fallback)
-        if (validateTokenAndExpiration) {
+        if (token && validateTokenAndExpiration) {
           const validation = validateTokenAndExpiration(jobId, token);
           if (!validation.valid) {
             const errorMsg = validation.error || 'Invalid or expired print link';
@@ -434,7 +447,7 @@ const PrintRelease = () => {
             } else {
               toast.error(errorMsg);
             }
-            return;
+            // Do not return here; attempt local printJobs fallback below
           }
         }
         
@@ -637,9 +650,10 @@ const PrintRelease = () => {
     const job = serverJob || printJobs.find(j => j.id === jobId && j.secureToken === token);
     if (!job) return;
     
-    // Find the user for this job
-    const user = mockUsers.find(u => String(u.id) === String(job.userId));
-    if (!user) return;
+    // Resolve user context
+    const autoUser = (user && String(user.id) === String(job.userId))
+      ? { id: user.id, name: user.fullName || user.username || 'User' }
+      : { id: job.userId, name: job.userName || 'User' };
     
     // Find the first available online printer
     const printer = printers.find(p => p.status === 'online');
@@ -647,12 +661,12 @@ const PrintRelease = () => {
     
     // Mark as releasing to prevent duplicate calls (React StrictMode)
     releasingRef.current = true;
-    setAuthenticatedUser(user);
+    setAuthenticatedUser(prev => prev || autoUser);
     setSelectedPrinter(printer);
     setLoading(true);
     
     // Release the job automatically
-    releasePrintJob(jobId, printer.id, user.id, token)
+    releasePrintJob(jobId, printer.id, autoUser.id, token)
       .then(() => {
         // Success - mark as released in this session
         releasedInSession.current = true;
@@ -757,7 +771,10 @@ const PrintRelease = () => {
 
     setLoading(true);
     try {
-      const token = new URLSearchParams(location.search).get('token');
+      const token = new URLSearchParams(location.search).get('token') || (printJobs.find(j => j.id === jobId)?.secureToken);
+      if (!token) {
+        throw new Error('Missing secure token for this job');
+      }
       await releasePrintJob(jobId, selectedPrinter.id, authenticatedUser.id, token);
       toast.success('Print job released successfully! You can release it again until the link expires.');
       
@@ -786,8 +803,9 @@ const PrintRelease = () => {
 
     setLoading(true);
     try {
-      const token = new URLSearchParams(location.search).get('token');
       for (const job of jobsWithDocuments) {
+        const token = new URLSearchParams(location.search).get('token') || job.secureToken;
+        if (!token) continue;
         await releasePrintJob(job.id, selectedPrinter.id, authenticatedUser.id, token);
       }
       toast.success('All print jobs released successfully! You can release them again until the links expire.');
@@ -798,6 +816,7 @@ const PrintRelease = () => {
       } else {
         toast.error(errorMsg);
       }
+      throw error;
     } finally {
       setLoading(false);
     }
@@ -833,12 +852,20 @@ const PrintRelease = () => {
     }
   };
 
-  const handleViewDocument = (job) => {
+  const handleViewDocument = async (job) => {
     // Use cached document first, fallback to job document
-    const documentData = cachedDocument || job?.document;
+    let documentData = cachedDocument || job?.document;
     if (!documentData?.dataUrl) {
-      toast.warning('Document not available for preview');
-      return;
+      try {
+        const fetched = await viewPrintJob(job.id, job.secureToken, authenticatedUser.id);
+        if (fetched?.dataUrl) {
+          documentData = fetched;
+          setCachedDocument(fetched);
+        }
+      } catch (err) {
+        toast.error(err.message || 'Failed to fetch document for preview');
+        return;
+      }
     }
 
     const { dataUrl, mimeType, name } = documentData;
@@ -936,12 +963,20 @@ const PrintRelease = () => {
     }
   };
 
-  const handlePrintDocument = (job) => {
+  const handlePrintDocument = async (job) => {
     // Use cached document first, fallback to job document
-    const documentData = cachedDocument || job?.document;
+    let documentData = cachedDocument || job?.document;
     if (!documentData?.dataUrl) {
-      toast.warning('Document not available for printing');
-      return;
+      try {
+        const fetched = await viewPrintJob(job.id, job.secureToken, authenticatedUser.id);
+        if (fetched?.dataUrl) {
+          documentData = fetched;
+          setCachedDocument(fetched);
+        }
+      } catch (err) {
+        toast.error(err.message || 'Failed to fetch document for printing');
+        return;
+      }
     }
 
     const { dataUrl, mimeType, name } = documentData;
