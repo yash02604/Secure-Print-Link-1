@@ -3,6 +3,7 @@ import { useDropzone } from 'react-dropzone';
 import styled from 'styled-components';
 import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
+import { useUser } from '@clerk/clerk-react';
 import { usePrintJob } from '../context/PrintJobContext';
 import { QRCodeCanvas } from 'qrcode.react';
 
@@ -367,6 +368,7 @@ const CopyButton = styled.button`
 
 const PrintJobSubmission = () => {
   const { currentUser } = useAuth();
+  const { user } = useUser();
   const { submitPrintJob, isSubmitting, error: apiError, setError: setApiError } = usePrintJob();
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -499,7 +501,8 @@ const PrintJobSubmission = () => {
     );
   }
 
-  if (!currentUser) {
+  const effectiveUser = user ? { id: user.id, name: user.fullName || user.username } : currentUser;
+  if (!effectiveUser) {
     return (
       <div style={{ color: 'red', padding: 32, textAlign: 'center' }}>
         <h2>You must be logged in to submit a print job.</h2>
@@ -551,8 +554,8 @@ const PrintJobSubmission = () => {
       try {
         const jobPayload = {
           ...jobData,
-          userId: currentUser.id,
-          userName: currentUser.name,
+          userId: effectiveUser.id,
+          userName: effectiveUser.name,
           file: selectedFile
         };
 
