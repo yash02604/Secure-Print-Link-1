@@ -698,7 +698,7 @@ const PrintRelease = () => {
         releasingRef.current = false;
       })
       .finally(() => setLoading(false));
-  }, [params.jobId, location.search, printJobs, printers, mockUsers, releasePrintJob, serverJob, cachedDocument]);
+  }, [params.jobId, location.search, printJobs, printers, mockUsers, releasePrintJob, serverJob, cachedDocument, user]);
 
   const userJobs = authenticatedUser 
     ? [
