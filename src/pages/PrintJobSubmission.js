@@ -29,6 +29,10 @@ const SubmissionContainer = styled.div`
   padding: 20px;
   max-width: 800px;
   margin: 0 auto;
+  
+  @media (max-width: 768px) {
+    padding: 12px;
+  }
 `;
 
 const PageHeader = styled.div`
@@ -46,6 +50,11 @@ const PageHeader = styled.div`
     color: #7f8c8d;
     font-size: 16px;
   }
+  
+  @media (max-width: 768px) {
+    h1 { font-size: 22px; }
+    p { font-size: 14px; }
+  }
 `;
 
 const SubmissionCard = styled.div`
@@ -53,6 +62,10 @@ const SubmissionCard = styled.div`
   border-radius: 12px;
   padding: 30px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  
+  @media (max-width: 768px) {
+    padding: 18px;
+  }
 `;
 
 const StepIndicator = styled.div`
@@ -90,6 +103,10 @@ const StepIndicator = styled.div`
       background: #ecf0f1;
       margin: 0 10px;
     }
+  }
+  
+  @media (max-width: 480px) {
+    .step-text { display: none; }
   }
 `;
 
@@ -139,6 +156,12 @@ const FileUploadSection = styled.div`
       background: #2980b9;
     }
   }
+  
+  @media (max-width: 768px) {
+    padding: 24px;
+    .upload-icon { font-size: 40px; }
+    .upload-text { font-size: 16px; }
+  }
 `;
 
 const FilePreview = styled.div`
@@ -187,6 +210,12 @@ const FilePreview = styled.div`
     &:hover {
       background: #f8d7da;
     }
+  }
+  
+  @media (max-width: 480px) {
+    flex-direction: column;
+    align-items: flex-start;
+    .remove-file { align-self: flex-end; }
   }
 `;
 
@@ -343,6 +372,11 @@ const SubmitButton = styled.button`
     opacity: 0.6;
     cursor: not-allowed;
     transform: none;
+  }
+  
+  @media (max-width: 768px) {
+    padding: 14px;
+    font-size: 15px;
   }
 `;
 

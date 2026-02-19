@@ -18,6 +18,11 @@ const ReleaseContainer = styled.div`
   padding: 20px;
   max-width: 1000px;
   margin: 0 auto;
+  
+  @media (max-width: 768px) {
+    padding: 12px;
+    max-width: 100%;
+  }
 `;
 
 const PageHeader = styled.div`
@@ -34,6 +39,11 @@ const PageHeader = styled.div`
   p {
     color: #7f8c8d;
     font-size: 16px;
+  }
+  
+  @media (max-width: 768px) {
+    h1 { font-size: 24px; }
+    p { font-size: 14px; }
   }
 `;
 
@@ -54,6 +64,11 @@ const PrinterInterface = styled.div`
     right: 0;
     height: 4px;
     background: linear-gradient(90deg, #3498db, #2ecc71, #f39c12, #e74c3c);
+  }
+  
+  @media (max-width: 768px) {
+    padding: 20px;
+    border-radius: 16px;
   }
 `;
 
@@ -194,6 +209,10 @@ const JobsSection = styled.div`
   border-radius: 12px;
   padding: 24px;
   margin-top: 30px;
+  
+  @media (max-width: 768px) {
+    padding: 16px;
+  }
 `;
 
 const JobsHeader = styled.div`
@@ -270,6 +289,13 @@ const JobItem = styled.div`
     gap: 8px;
     flex-wrap: wrap;
     align-items: center;
+  }
+  
+  @media (max-width: 600px) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    .job-actions { width: 100%; }
   }
 `;
 
