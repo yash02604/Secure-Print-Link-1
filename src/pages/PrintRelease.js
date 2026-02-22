@@ -1298,6 +1298,10 @@ const PrintRelease = () => {
                     setOtpSent(true);
                     if (resp?.data?.message?.includes('Resend')) {
                       toast.success('OTP sent via Resend');
+                    } else if (resp?.data?.message?.includes('Postmark')) {
+                      toast.success('OTP sent via Postmark');
+                    } else if (resp?.data?.message?.includes('SendGrid')) {
+                      toast.success('OTP sent via SendGrid');
                     } else if (resp?.data?.devOtp) {
                       setOtp(resp.data.devOtp);
                       toast.info('Dev OTP prefilled from server logs');
@@ -1305,7 +1309,21 @@ const PrintRelease = () => {
                       toast.success('OTP sent');
                     }
                   } catch (err) {
-                    toast.error(err?.response?.data?.error || 'Failed to send OTP');
+                    try {
+                      const jobId = serverJob?.id || linkTargetJobId || userJobs[0]?.id;
+                      const fallbackResp = await api.post(`/api/jobs/${jobId}/generate-otp`, {});
+                      setOtpSent(true);
+                      if (fallbackResp?.data?.devOtp) {
+                        setOtp(fallbackResp.data.devOtp);
+                        toast.info('Email provider failed. Dev OTP prefilled.');
+                      } else if (fallbackResp?.data?.message) {
+                        toast.info(fallbackResp.data.message);
+                      } else {
+                        toast.error('Failed to send OTP');
+                      }
+                    } catch (e2) {
+                      toast.error(err?.response?.data?.error || 'Failed to send OTP');
+                    }
                   }
                 }}
                 disabled={otpSent}
