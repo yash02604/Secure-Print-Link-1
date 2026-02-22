@@ -1296,7 +1296,9 @@ const PrintRelease = () => {
                     if (!jobId) return toast.error('No job selected');
                     const resp = await api.post(`/api/jobs/${jobId}/generate-otp`, { email: authenticatedUser?.email || undefined });
                     setOtpSent(true);
-                    if (resp?.data?.devOtp) {
+                    if (resp?.data?.message?.includes('Resend')) {
+                      toast.success('OTP sent via Resend');
+                    } else if (resp?.data?.devOtp) {
                       setOtp(resp.data.devOtp);
                       toast.info('Dev OTP prefilled from server logs');
                     } else {
