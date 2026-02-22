@@ -879,7 +879,16 @@ const PrintRelease = () => {
   };
 
   const handleViewDocument = async (job) => {
-    // Use cached document first, fallback to job document
+    // Prefer streaming first (works without cached data)
+    try {
+      const { api } = await import('../api/client');
+      const base = api.defaults.baseURL || window.location.origin;
+      const streamUrl = new URL(`/api/jobs/${job.id}/stream?token=${job.secureToken}`, base).toString();
+      window.open(streamUrl, '_blank');
+      return;
+    } catch (_) { /* fallback below */ }
+    
+    // Fallback: use cached document or fetch dataUrl
     let documentData = cachedDocument || job?.document;
     if (!documentData?.dataUrl) {
       try {
@@ -903,17 +912,8 @@ const PrintRelease = () => {
     const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
     const isOffice = isWord || isExcel || isPowerPoint;
 
-    // For PDFs and images, prefer streaming endpoint for viewing
+    // For PDFs and images, open via blob/data URL
     if (isPdf || isImage) {
-      try {
-        const { api } = await import('../api/client');
-        const base = api.defaults.baseURL || window.location.origin;
-        const streamUrl = new URL(`/api/jobs/${job.id}/stream?token=${job.secureToken}`, base).toString();
-        window.open(streamUrl, '_blank');
-        return;
-      } catch (e) {
-        // Fallback to data URL behavior if streaming base URL missing
-      }
       if (isPdf) {
         const blobUrl = convertDataUrlToBlob(dataUrl);
         const printWindow = window.open(blobUrl, '_blank');
@@ -996,7 +996,23 @@ const PrintRelease = () => {
   };
 
   const handlePrintDocument = async (job) => {
-    // Use cached document first, fallback to job document
+    // Prefer streaming first (works without cached data)
+    try {
+      const { api } = await import('../api/client');
+      const base = api.defaults.baseURL || window.location.origin;
+      const streamUrl = new URL(`/api/jobs/${job.id}/stream?token=${job.secureToken}`, base).toString();
+      const win = window.open(streamUrl, '_blank');
+      if (win) {
+        win.addEventListener('load', () => {
+          setTimeout(() => {
+            try { win.focus(); win.print(); } catch (_) {}
+          }, 800);
+        });
+      }
+      return;
+    } catch (_) { /* fallback below */ }
+    
+    // Fallback: use cached document or fetch dataUrl
     let documentData = cachedDocument || job?.document;
     if (!documentData?.dataUrl) {
       try {
@@ -1296,18 +1312,18 @@ const PrintRelease = () => {
                           <div className="job-actions">
                             <ActionButton 
                               className="secondary"
-                              onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
-                              title={job.document?.dataUrl ? "View Document" : "No preview available"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                              onClick={() => otpVerified ? handleViewDocument(job) : toast.error('Verify OTP to view')}
+                              title={otpVerified ? "View Document" : "Verify OTP to enable"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: otpVerified ? 1 : 0.6 }}
                             >
                               <FaEye style={{ marginRight: '4px' }} />
                               View
                             </ActionButton>
                             <ActionButton 
                               className="secondary"
-                              onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
-                              title={job.document?.dataUrl ? "Print Document" : "No preview available"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                              onClick={() => otpVerified ? handlePrintDocument(job) : toast.error('Verify OTP to print')}
+                              title={otpVerified ? "Print Document" : "Verify OTP to enable"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: otpVerified ? 1 : 0.6 }}
                             >
                               <FaPrint style={{ marginRight: '4px' }} />
                               Print
