@@ -401,6 +401,56 @@ const smtpSendMail = async ({ host, port, user, pass, from, to, subject, text })
   });
 };
 
+// REST email providers via fetch (Resend, SendGrid)
+const sendEmailViaProviders = async ({ to, subject, text }) => {
+  try {
+    const from = process.env.FROM_EMAIL || process.env.SMTP_USER || 'no-reply@example.com';
+    // Prefer Resend
+    if (process.env.RESEND_API_KEY) {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from,
+          to,
+          subject,
+          text
+        })
+      });
+      if (res.ok) return true;
+      const errText = await res.text().catch(() => '');
+      console.error('Resend error:', res.status, errText);
+    }
+    // Fallback to SendGrid
+    if (process.env.SENDGRID_API_KEY) {
+      const payload = {
+        personalizations: [{ to: [{ email: to }] }],
+        from: { email: from },
+        subject,
+        content: [{ type: 'text/plain', value: text }]
+      };
+      const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      if (res.status === 202) return true;
+      const errText = await res.text().catch(() => '');
+      console.error('SendGrid error:', res.status, errText);
+    }
+    return false;
+  } catch (err) {
+    console.error('Email provider send error:', err);
+    return false;
+  }
+};
+
 // Stream decrypted document (counts as the single allowed view)
 router.get('/:id/stream', (req, res) => {
   const db = req.db;
@@ -501,20 +551,24 @@ router.post('/:id/generate-otp', (req, res) => {
   const pass = process.env.SMTP_PASS;
   const from = process.env.FROM_EMAIL || user;
   const { email } = req.body || {};
-  if (!email) {
-    return res.status(400).json({ error: 'Email is required to send OTP' });
+  if (email) {
+    const subject = 'Your Secure Print OTP';
+    const text = `Your OTP is ${otp}. It expires in 5 minutes. Job: ${id}`;
+    smtpSendMail({ host, port, user, pass, from, to: email, subject, text })
+      .then(() => res.json({ success: true, message: 'OTP sent to email' }))
+      .catch(async (err) => {
+        console.error('SMTP send error:', err?.message || err);
+        const providerSent = await sendEmailViaProviders({ to: email, subject, text });
+        if (providerSent) {
+          return res.json({ success: true, message: 'OTP sent via email provider' });
+        }
+        console.warn(`[OTP] Falling back to dev OTP for job ${id}`);
+        return res.json({ success: true, message: 'Email send failed. Using dev OTP.', devOtp: otp });
+      });
+  } else {
+    console.warn(`[OTP] No email provided. Returning dev OTP for job ${id}`);
+    return res.json({ success: true, message: 'Dev mode OTP. Provide an email to send.', devOtp: otp });
   }
-  smtpSendMail({
-    host, port, user, pass, from, to: email,
-    subject: 'Your Secure Print OTP',
-    text: `Your OTP is ${otp}. It expires in 5 minutes. Job: ${id}`
-  }).then(() => {
-    return res.json({ success: true, message: 'OTP sent to email' });
-  }).catch((err) => {
-    console.error('SMTP send error:', err?.message || err);
-    console.warn(`[OTP] Falling back to dev OTP for job ${id}`);
-    return res.json({ success: true, message: 'SMTP failed. Using dev OTP.', devOtp: otp });
-  });
 });
 
 // Verify OTP for a job
