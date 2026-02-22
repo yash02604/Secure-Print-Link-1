@@ -1292,7 +1292,7 @@ const PrintRelease = () => {
                 className="secondary"
                 onClick={async () => {
                   try {
-                    const jobId = linkTargetJobId || userJobs[0]?.id;
+                    const jobId = serverJob?.id || linkTargetJobId || userJobs[0]?.id;
                     if (!jobId) return toast.error('No job selected');
                     const resp = await api.post(`/api/jobs/${jobId}/generate-otp`, { email: authenticatedUser?.email || undefined });
                     setOtpSent(true);
@@ -1323,7 +1323,7 @@ const PrintRelease = () => {
                 className="primary"
                 onClick={async () => {
                   try {
-                    const jobId = linkTargetJobId || userJobs[0]?.id;
+                    const jobId = serverJob?.id || linkTargetJobId || userJobs[0]?.id;
                     if (!jobId) return toast.error('No job selected');
                     await api.post(`/api/jobs/${jobId}/verify-otp`, { otp });
                     setOtpVerified(true);
