@@ -55,7 +55,11 @@ export function createDb(dbPath) {
       viewCount INTEGER DEFAULT 0,  -- Track how many times document was viewed
       firstViewedAt TEXT,          -- When first viewed
       lastViewedAt TEXT,           -- When last viewed
-      deletedAt TEXT               -- When deleted (soft delete marker)
+      deletedAt TEXT,              -- When deleted (soft delete marker)
+      otpHash TEXT,
+      otpExpiresAt TEXT,
+      otpAttempts INTEGER DEFAULT 0,
+      otpVerified INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS documents (
@@ -158,6 +162,21 @@ export function createDb(dbPath) {
     if (!hasCreatedAt) db.exec(`ALTER TABLE users ADD COLUMN createdAt TEXT`);
   } catch (e) {
     // If ALTER fails (e.g., older SQLite), ignore; columns may already exist
+    try { /* noop */ } catch (_) {}
+  }
+  
+  // Ensure jobs table has OTP columns for release page verification
+  try {
+    const jobColumns = db.prepare(`PRAGMA table_info(jobs)`).all();
+    const hasOtpHash = jobColumns.some(c => c.name === 'otpHash');
+    const hasOtpExpiresAt = jobColumns.some(c => c.name === 'otpExpiresAt');
+    const hasOtpAttempts = jobColumns.some(c => c.name === 'otpAttempts');
+    const hasOtpVerified = jobColumns.some(c => c.name === 'otpVerified');
+    if (!hasOtpHash) db.exec(`ALTER TABLE jobs ADD COLUMN otpHash TEXT`);
+    if (!hasOtpExpiresAt) db.exec(`ALTER TABLE jobs ADD COLUMN otpExpiresAt TEXT`);
+    if (!hasOtpAttempts) db.exec(`ALTER TABLE jobs ADD COLUMN otpAttempts INTEGER DEFAULT 0`);
+    if (!hasOtpVerified) db.exec(`ALTER TABLE jobs ADD COLUMN otpVerified INTEGER DEFAULT 0`);
+  } catch (e) {
     try { /* noop */ } catch (_) {}
   }
 

@@ -5,6 +5,9 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
+import tls from 'tls';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -336,6 +339,68 @@ router.get('/:id', (req, res) => {
   res.json({ job });
 });
 
+// Minimal SMTP over TLS (port 465) sender
+const smtpSendMail = async ({ host, port, user, pass, from, to, subject, text }) => {
+  return new Promise((resolve, reject) => {
+    const socket = tls.connect({ host, port: +port, rejectUnauthorized: false }, () => {});
+    let buffer = '';
+    const write = (line) => socket.write(line.endsWith('\r\n') ? line : (line + '\r\n'));
+    const expect = (codePrefix) => new Promise((res, rej) => {
+      const onData = (data) => {
+        buffer += data.toString();
+        const lines = buffer.split('\r\n');
+        if (lines.length > 1) {
+          buffer = lines.pop();
+          const last = lines[lines.length - 1] || '';
+          if (last.startsWith(codePrefix)) {
+            socket.removeListener('data', onData);
+            res(last);
+          } else if (/^[45]\d{2}/.test(last)) {
+            socket.removeListener('data', onData);
+            rej(new Error(last));
+          }
+        }
+      };
+      socket.on('data', onData);
+      socket.on('error', (err) => rej(err));
+    });
+    
+    (async () => {
+      try {
+        await expect('220');
+        write(`EHLO localhost`);
+        await expect('250');
+        write(`AUTH LOGIN`);
+        await expect('334'); // username prompt
+        write(Buffer.from(user).toString('base64'));
+        await expect('334'); // password prompt
+        write(Buffer.from(pass).toString('base64'));
+        await expect('235'); // auth ok
+        write(`MAIL FROM:<${from}>`);
+        await expect('250');
+        write(`RCPT TO:<${to}>`);
+        await expect('250');
+        write(`DATA`);
+        await expect('354');
+        const headers = [
+          `Subject: ${subject}`,
+          `From: ${from}`,
+          `To: ${to}`,
+          `Content-Type: text/plain; charset=utf-8`
+        ].join('\r\n');
+        write(`${headers}\r\n\r\n${text}\r\n.`);
+        await expect('250');
+        write(`QUIT`);
+        resolve(true);
+        socket.end();
+      } catch (err) {
+        try { write('QUIT'); socket.end(); } catch (_) {}
+        reject(err);
+      }
+    })();
+  });
+};
+
 // Stream decrypted document (counts as the single allowed view)
 router.get('/:id/stream', (req, res) => {
   const db = req.db;
@@ -406,6 +471,86 @@ router.get('/:id/stream', (req, res) => {
   } finally {
     activeOperations.delete(id);
   }
+});
+
+// Generate OTP for a job (5-minute expiry)
+router.post('/:id/generate-otp', (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+  const { email } = req.body || {};
+  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (!email) return res.status(400).json({ error: 'Email is required to send OTP' });
+  
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+  const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  
+  db.prepare('UPDATE jobs SET otpHash = ?, otpExpiresAt = ?, otpAttempts = 0, otpVerified = 0 WHERE id = ?')
+    .run(otpHash, expiresAt, id);
+  
+  // Dev-mode helpers: no SMTP config; just log OTP
+  const smtpConfigured = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  if (!smtpConfigured) {
+    console.warn(`[OTP] Generated OTP ${otp} for job ${id}. Configure SMTP to send emails.`);
+    return res.json({ success: true, message: 'OTP generated (dev mode). Check server logs for the code.', devOtp: otp });
+  }
+  
+  // Send email via minimal TLS SMTP (supports port 465)
+  const host = process.env.SMTP_HOST;
+  const port = +(process.env.SMTP_PORT || 465);
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.FROM_EMAIL || user;
+  smtpSendMail({
+    host, port, user, pass, from, to: email,
+    subject: 'Your Secure Print OTP',
+    text: `Your OTP is ${otp}. It expires in 5 minutes. Job: ${id}`
+  }).then(() => {
+    return res.json({ success: true, message: 'OTP sent to email' });
+  }).catch((err) => {
+    console.error('SMTP send error:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Failed to send OTP email' });
+  });
+});
+
+// Verify OTP for a job
+router.post('/:id/verify-otp', (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+  const { otp } = req.body || {};
+  if (!otp || !/^\d{6}$/.test(String(otp))) {
+    return res.status(400).json({ error: 'Invalid OTP format' });
+  }
+  
+  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  
+  if (!job.otpHash || !job.otpExpiresAt) {
+    return res.status(400).json({ error: 'No OTP requested for this job' });
+  }
+  
+  const now = Date.now();
+  const expires = Date.parse(job.otpExpiresAt);
+  if (Number.isFinite(expires) && now > expires) {
+    db.prepare('UPDATE jobs SET otpHash = NULL, otpExpiresAt = NULL, otpAttempts = 0, otpVerified = 0 WHERE id = ?').run(id);
+    return res.status(400).json({ error: 'OTP expired. Request a new one.' });
+  }
+  
+  const submittedHash = crypto.createHash('sha256').update(String(otp)).digest('hex');
+  const attempts = (job.otpAttempts ?? 0) + 1;
+  if (attempts > 5) {
+    db.prepare('UPDATE jobs SET otpHash = NULL, otpExpiresAt = NULL, otpAttempts = 0, otpVerified = 0 WHERE id = ?').run(id);
+    return res.status(429).json({ error: 'Too many attempts. OTP reset.' });
+  }
+  
+  if (submittedHash !== job.otpHash) {
+    db.prepare('UPDATE jobs SET otpAttempts = ? WHERE id = ?').run(attempts, id);
+    return res.status(400).json({ error: 'Incorrect OTP' });
+  }
+  
+  db.prepare('UPDATE jobs SET otpVerified = 1 WHERE id = ?').run(id);
+  return res.json({ success: true, message: 'OTP verified' });
 });
 
 // View job document (single-use only)

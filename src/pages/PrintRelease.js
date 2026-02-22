@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import api from '../api/client';
 import styled from 'styled-components';
 import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
@@ -420,6 +421,7 @@ const PrintRelease = () => {
       setAuthenticatedUser({
         id: user.id,
         name: user.fullName || user.username || 'User',
+        email: (user.primaryEmailAddress && user.primaryEmailAddress.emailAddress) || (Array.isArray(user.emailAddresses) && user.emailAddresses[0]?.emailAddress) || '',
         role: 'User',
         department: 'General'
       });
@@ -444,7 +446,6 @@ const PrintRelease = () => {
     // Try server API validation first (permanent fix)
     const validateFromServer = async () => {
       try {
-        const { api } = await import('../api/client');
         const response = await api.get(`/api/jobs/${jobId}?token=${token}`);
         if (response.data.job) {
           setServerJob(response.data.job);
@@ -884,7 +885,6 @@ const PrintRelease = () => {
   const handleViewDocument = async (job) => {
     // Prefer streaming first (works without cached data)
     try {
-      const { api } = await import('../api/client');
       const base = api.defaults.baseURL || window.location.origin;
       const streamUrl = new URL(`/api/jobs/${job.id}/stream?token=${job.secureToken}`, base).toString();
       window.open(streamUrl, '_blank');
@@ -1001,7 +1001,6 @@ const PrintRelease = () => {
   const handlePrintDocument = async (job) => {
     // Prefer streaming first (works without cached data)
     try {
-      const { api } = await import('../api/client');
       const base = api.defaults.baseURL || window.location.origin;
       const streamUrl = new URL(`/api/jobs/${job.id}/stream?token=${job.secureToken}`, base).toString();
       const win = window.open(streamUrl, '_blank');
@@ -1042,7 +1041,6 @@ const PrintRelease = () => {
     // Prefer streaming for PDFs/images for printing
     if (isPdf || isImage) {
       try {
-        const { api } = await import('../api/client');
         const base = api.defaults.baseURL || window.location.origin;
         const streamUrl = new URL(`/api/jobs/${job.id}/stream?token=${job.secureToken}`, base).toString();
         const win = window.open(streamUrl, '_blank');
@@ -1294,12 +1292,16 @@ const PrintRelease = () => {
                 className="secondary"
                 onClick={async () => {
                   try {
-                    const { api } = await import('../api/client');
                     const jobId = linkTargetJobId || userJobs[0]?.id;
                     if (!jobId) return toast.error('No job selected');
-                    await api.post(`/api/jobs/${jobId}/generate-otp`, { email: authenticatedUser?.email || undefined });
+                    const resp = await api.post(`/api/jobs/${jobId}/generate-otp`, { email: authenticatedUser?.email || undefined });
                     setOtpSent(true);
-                    toast.success('OTP sent');
+                    if (resp?.data?.devOtp) {
+                      setOtp(resp.data.devOtp);
+                      toast.info('Dev OTP prefilled from server logs');
+                    } else {
+                      toast.success('OTP sent');
+                    }
                   } catch (err) {
                     toast.error(err?.response?.data?.error || 'Failed to send OTP');
                   }
@@ -1321,7 +1323,6 @@ const PrintRelease = () => {
                 className="primary"
                 onClick={async () => {
                   try {
-                    const { api } = await import('../api/client');
                     const jobId = linkTargetJobId || userJobs[0]?.id;
                     if (!jobId) return toast.error('No job selected');
                     await api.post(`/api/jobs/${jobId}/verify-otp`, { otp });
