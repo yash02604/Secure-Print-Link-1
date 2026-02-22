@@ -903,14 +903,20 @@ const PrintRelease = () => {
     const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
     const isOffice = isWord || isExcel || isPowerPoint;
 
-    // For PDFs and images, open in a new window for viewing/printing
+    // For PDFs and images, prefer streaming endpoint for viewing
     if (isPdf || isImage) {
+      try {
+        const { api } = await import('../api/client');
+        const base = api.defaults.baseURL || window.location.origin;
+        const streamUrl = new URL(`/api/jobs/${job.id}/stream?token=${job.secureToken}`, base).toString();
+        window.open(streamUrl, '_blank');
+        return;
+      } catch (e) {
+        // Fallback to data URL behavior if streaming base URL missing
+      }
       if (isPdf) {
-        // Convert to blob URL for PDFs (avoids data URL size limits)
         const blobUrl = convertDataUrlToBlob(dataUrl);
         const printWindow = window.open(blobUrl, '_blank');
-        
-        // Cleanup blob URL after window loads
         if (blobUrl !== dataUrl && printWindow) {
           printWindow.addEventListener('load', () => {
             setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
@@ -1014,17 +1020,33 @@ const PrintRelease = () => {
     const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
     const isOffice = isWord || isExcel || isPowerPoint;
 
-    // For PDFs, open and print
+    // Prefer streaming for PDFs/images for printing
+    if (isPdf || isImage) {
+      try {
+        const { api } = await import('../api/client');
+        const base = api.defaults.baseURL || window.location.origin;
+        const streamUrl = new URL(`/api/jobs/${job.id}/stream?token=${job.secureToken}`, base).toString();
+        const win = window.open(streamUrl, '_blank');
+        if (win) {
+          win.addEventListener('load', () => {
+            setTimeout(() => {
+              try { win.focus(); win.print(); } catch (_) {}
+            }, 800);
+          });
+        }
+        return;
+      } catch (e) {
+        // Fallback to data URL behavior
+      }
+    }
+    
     if (isPdf) {
-      // Convert to blob URL for PDFs (avoids data URL size limits)
       const blobUrl = convertDataUrlToBlob(dataUrl);
       const printWindow = window.open(blobUrl, '_blank');
-      
       if (printWindow) {
         printWindow.addEventListener('load', () => {
           setTimeout(() => {
             printWindow.print();
-            // Cleanup blob URL after print dialog closes
             if (blobUrl !== dataUrl) {
               setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
             }

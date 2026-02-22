@@ -9,7 +9,7 @@ import crypto from 'crypto';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const uploadsDir = join(__dirname, '../../uploads');
-const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024) } });
+const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_UPLOAD_BYTES || 50 * 1024 * 1024) } });
 
 const router = Router();
 
@@ -334,6 +334,78 @@ router.get('/:id', (req, res) => {
   }
 
   res.json({ job });
+});
+
+// Stream decrypted document (counts as the single allowed view)
+router.get('/:id/stream', (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+  const { token } = req.query;
+  
+  activeOperations.add(id);
+  try {
+    const currentServerTime = Date.now();
+    const metadata = expirationMetadata.get(id);
+    if (metadata) {
+      if (metadata.token !== token) {
+        return res.status(403).json({ error: 'Invalid token' });
+      }
+      if (currentServerTime >= metadata.expiresAt) {
+        expirationMetadata.delete(id);
+        if (metadata.filePath) {
+          try { if (fs.existsSync(metadata.filePath)) fs.unlinkSync(metadata.filePath); } catch (_) {}
+        }
+        return res.status(410).json({ error: 'Print link has expired' });
+      }
+    }
+    
+    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
+    if (job.otpVerified !== 1) return res.status(403).json({ error: 'OTP verification required' });
+    
+    // SINGLE-USE ENFORCEMENT: If already viewed, block
+    if (job.viewCount > 0) {
+      return res.status(403).json({ error: 'Document already viewed (one-time only)', alreadyViewed: true });
+    }
+    
+    // Mark as viewed once
+    const now = new Date().toISOString();
+    db.prepare('UPDATE jobs SET viewCount = viewCount + 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
+      .run(now, now, id);
+    if (metadata) {
+      metadata.viewCount = 1;
+      metadata.firstViewedAt = now;
+      expirationMetadata.set(id, metadata);
+    }
+    
+    // Fetch document encrypted content
+    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
+    if (document) {
+      const decryptedBuffer = decryptDocumentForJob(document.content, id);
+      res.setHeader('Content-Type', document.mimeType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${document.filename || job.documentName || 'document'}"`);
+      res.setHeader('Content-Length', decryptedBuffer.length);
+      return res.status(200).send(decryptedBuffer);
+    } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
+      // Fallback: stream raw file from filesystem (legacy)
+      const stat = fs.statSync(metadata.filePath);
+      res.setHeader('Content-Type', metadata.mimetype || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${metadata.originalname || job.documentName || 'document'}"`);
+      res.setHeader('Content-Length', stat.size);
+      const stream = fs.createReadStream(metadata.filePath);
+      stream.pipe(res);
+      stream.on('error', () => res.status(500).end());
+      return;
+    }
+    
+    return res.status(404).json({ error: 'Document not found' });
+  } catch (err) {
+    console.error('Error streaming document:', err);
+    return res.status(500).json({ error: 'Failed to stream document' });
+  } finally {
+    activeOperations.delete(id);
+  }
 });
 
 // View job document (single-use only)
