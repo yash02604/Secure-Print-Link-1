@@ -411,6 +411,9 @@ const PrintRelease = () => {
   const [autoPrintDone, setAutoPrintDone] = useState(false);
   const [printedViaIframe, setPrintedViaIframe] = useState(false);
   const [serverJob, setServerJob] = useState(null);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpVerified, setOtpVerified] = useState(false);
+  const [otp, setOtp] = useState('');
   
   useEffect(() => {
     if (user && !authenticatedUser) {
@@ -1284,6 +1287,55 @@ const PrintRelease = () => {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div style={{ marginBottom: '20px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <ActionButton
+                className="secondary"
+                onClick={async () => {
+                  try {
+                    const { api } = await import('../api/client');
+                    const jobId = linkTargetJobId || userJobs[0]?.id;
+                    if (!jobId) return toast.error('No job selected');
+                    await api.post(`/api/jobs/${jobId}/generate-otp`, { email: authenticatedUser?.email || undefined });
+                    setOtpSent(true);
+                    toast.success('OTP sent');
+                  } catch (err) {
+                    toast.error(err?.response?.data?.error || 'Failed to send OTP');
+                  }
+                }}
+                disabled={otpSent}
+                title={otpSent ? 'OTP already sent' : 'Send OTP to email'}
+              >
+                Send OTP
+              </ActionButton>
+              <input
+                type="text"
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.trim())}
+                placeholder="Enter 6-digit OTP"
+                style={{ padding: '10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.1)', color: 'white', minWidth: '160px' }}
+                disabled={!otpSent || otpVerified}
+              />
+              <ActionButton
+                className="primary"
+                onClick={async () => {
+                  try {
+                    const { api } = await import('../api/client');
+                    const jobId = linkTargetJobId || userJobs[0]?.id;
+                    if (!jobId) return toast.error('No job selected');
+                    await api.post(`/api/jobs/${jobId}/verify-otp`, { otp });
+                    setOtpVerified(true);
+                    toast.success('OTP verified');
+                  } catch (err) {
+                    toast.error(err?.response?.data?.error || 'Invalid or expired OTP');
+                  }
+                }}
+                disabled={!otpSent || otp.length !== 6 || otpVerified}
+                title={otpVerified ? 'OTP already verified' : 'Verify OTP to enable actions'}
+              >
+                Verify OTP
+              </ActionButton>
             </div>
 
             <JobsSection>
