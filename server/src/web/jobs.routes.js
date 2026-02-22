@@ -5,19 +5,55 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
+import tls from 'tls';
+import dotenv from 'dotenv';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const uploadsDir = join(__dirname, '../../uploads');
 const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_UPLOAD_BYTES || 50 * 1024 * 1024) } });
 
+// Load environment variables from multiple possible locations
+try {
+  dotenv.config(); // default .env in current working directory
+  const projectRoot = join(__dirname, '../../..');
+  dotenv.config({ path: join(projectRoot, '.env.local'), override: false });
+  dotenv.config({ path: join(projectRoot, '.env'), override: false });
+  const serverRoot = join(__dirname, '../..');
+  dotenv.config({ path: join(serverRoot, '.env.local'), override: false });
+  dotenv.config({ path: join(serverRoot, '.env'), override: false });
+} catch (_) {}
 const router = Router();
 
 // Encryption helpers (AES-256-GCM with per-job keys)
+// REST email provider: Resend (preferred)
+const sendEmailViaProviders = async ({ to, subject, text }) => {
+  try {
+    const from = process.env.FROM_EMAIL || 'no-reply@example.com';
+    if (process.env.RESEND_API_KEY) {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        },
+        body: JSON.stringify({ from, to, subject, text })
+      });
+      if (res.ok) return true;
+      const errText = await res.text().catch(() => '');
+      console.error('Resend error:', res.status, errText);
+    }
+    return false;
+  } catch (err) {
+    console.error('Email provider send error:', err);
+    return false;
+  }
+};
+
 const getMasterKey = () => {
   const rawKey = process.env.ENCRYPTION_KEY || 'default-encryption-key-change-me';
   return crypto.createHash('sha256').update(rawKey).digest();
 };
+
 
 const deriveJobKey = (jobId) => {
   const masterKey = getMasterKey();
@@ -334,6 +370,75 @@ router.get('/:id', (req, res) => {
   }
 
   res.json({ job });
+});
+
+// Generate OTP for a job (5-minute expiry)
+router.post('/:id/generate-otp', async (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+  const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  
+  db.prepare('UPDATE jobs SET otpHash = ?, otpExpiresAt = ?, otpAttempts = 0, otpVerified = 0 WHERE id = ?')
+    .run(otpHash, expiresAt, id);
+  
+  const { email } = req.body || {};
+  if (!email) {
+    return res.json({ success: true, message: 'Dev OTP (no email provided)', devOtp: otp });
+  }
+  
+  const subject = 'Your Secure Print OTP';
+  const text = `Your OTP is ${otp}. It expires in 5 minutes. Job: ${id}`;
+  
+  const sent = await sendEmailViaProviders({ to: email, subject, text });
+  if (sent) {
+    return res.json({ success: true, message: 'OTP sent via Resend' });
+  }
+  
+  return res.json({ success: true, message: 'Resend failed. Using dev OTP.', devOtp: otp });
+});
+
+// Verify OTP for a job
+router.post('/:id/verify-otp', (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+  const { otp } = req.body || {};
+  if (!otp || !/^\d{6}$/.test(String(otp))) {
+    return res.status(400).json({ error: 'Invalid OTP format' });
+  }
+  
+  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  
+  if (!job.otpHash || !job.otpExpiresAt) {
+    return res.status(400).json({ error: 'No OTP requested for this job' });
+  }
+  
+  const now = Date.now();
+  const expires = Date.parse(job.otpExpiresAt);
+  if (Number.isFinite(expires) && now > expires) {
+    db.prepare('UPDATE jobs SET otpHash = NULL, otpExpiresAt = NULL, otpAttempts = 0, otpVerified = 0 WHERE id = ?').run(id);
+    return res.status(400).json({ error: 'OTP expired. Request a new one.' });
+  }
+  
+  const submittedHash = crypto.createHash('sha256').update(String(otp)).digest('hex');
+  const attempts = (job.otpAttempts ?? 0) + 1;
+  if (attempts > 5) {
+    db.prepare('UPDATE jobs SET otpHash = NULL, otpExpiresAt = NULL, otpAttempts = 0, otpVerified = 0 WHERE id = ?').run(id);
+    return res.status(429).json({ error: 'Too many attempts. OTP reset.' });
+  }
+  
+  if (submittedHash !== job.otpHash) {
+    db.prepare('UPDATE jobs SET otpAttempts = ? WHERE id = ?').run(attempts, id);
+    return res.status(400).json({ error: 'Incorrect OTP' });
+  }
+  
+  db.prepare('UPDATE jobs SET otpVerified = 1 WHERE id = ?').run(id);
+  return res.json({ success: true, message: 'OTP verified' });
 });
 
 // Stream decrypted document (counts as the single allowed view)
