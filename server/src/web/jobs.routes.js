@@ -27,56 +27,69 @@ const router = Router();
 
 // Encryption helpers (AES-256-GCM with per-job keys)
 // REST email provider: Resend (preferred)
-const sendEmailViaProviders = async ({ to, subject, text }) => {
+const buildOtpEmail = (otp, jobId) => {
+  const subject = 'Your Secure Print OTP';
+  const text = `Your OTP is ${otp}. It expires in 5 minutes. Job: ${jobId}`;
+  const html = [
+    '<div style="font-family: Arial, Helvetica, sans-serif; max-width: 480px; margin: 0 auto; padding: 16px;">',
+    '<h2 style="margin: 0 0 8px; color: #111;">Secure Print Verification</h2>',
+    '<p style="margin: 0 0 16px; color: #333;">Use the one-time code below to confirm your email and unlock printing.</p>',
+    `<div style="font-size: 28px; letter-spacing: 6px; font-weight: 700; color: #0b5cff; margin: 12px 0; text-align: center;">${otp}</div>`,
+    '<p style="margin: 12px 0; color: #333;">This code expires in <strong>5 minutes</strong>.</p>',
+    `<p style="margin: 12px 0; color: #666;">Job: <span style="font-family: monospace;">${jobId}</span></p>`,
+    '<p style="margin: 16px 0; font-size: 12px; color: #888;">If you did not request this, you can ignore this email.</p>',
+    '</div>'
+  ].join('');
+  return { subject, text, html };
+};
+
+const sendEmailViaProviders = async ({ to, subject, text, html }) => {
   try {
-    const from = process.env.FROM_EMAIL || 'no-reply@example.com';
-    if (process.env.RESEND_API_KEY) {
-      const res = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ from, to, subject, text })
-      });
-      if (res.ok) return 'resend';
-      const errText = await res.text().catch(() => '');
-      console.error('Resend error:', res.status, errText);
+    const fromEmail = process.env.FROM_EMAIL || 'no-reply@example.com';
+    const fromName = process.env.FROM_NAME || 'Secure Print Link';
+    const from = `${fromName} <${fromEmail}>`;
+    const preferred = (process.env.EMAIL_PROVIDER || '').toLowerCase();
+    const tryOrder = (() => {
+      if (preferred === 'sendgrid') return ['sendgrid', 'resend', 'postmark'];
+      if (preferred === 'postmark') return ['postmark', 'resend', 'sendgrid'];
+      if (preferred === 'resend') return ['resend', 'postmark', 'sendgrid'];
+      if (process.env.SENDGRID_API_KEY) return ['sendgrid', 'resend', 'postmark'];
+      return ['resend', 'postmark', 'sendgrid'];
+    })();
+    for (const provider of tryOrder) {
+      if (provider === 'resend' && process.env.RESEND_API_KEY) {
+        const res = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ from, to, subject, text, html })
+        });
+        if (res.ok) return 'resend';
+      }
+      if (provider === 'postmark' && process.env.POSTMARK_API_TOKEN) {
+        const res = await fetch('https://api.postmarkapp.com/email', {
+          method: 'POST',
+          headers: { 'X-Postmark-Server-Token': process.env.POSTMARK_API_TOKEN, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ From: fromEmail, To: to, Subject: subject, TextBody: text, HtmlBody: html })
+        });
+        if (res.ok) return 'postmark';
+      }
+      if (provider === 'sendgrid' && process.env.SENDGRID_API_KEY) {
+        const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            personalizations: [{ to: [{ email: to }] }],
+            from: { email: fromEmail, name: fromName },
+            subject,
+            content: [
+              { type: 'text/plain', value: text },
+              { type: 'text/html', value: html }
+            ]
+          })
+        });
+        if (res.status === 202 || res.ok) return 'sendgrid';
+      }
     }
-
-    if (process.env.POSTMARK_API_TOKEN) {
-      const res = await fetch('https://api.postmarkapp.com/email', {
-        method: 'POST',
-        headers: {
-          'X-Postmark-Server-Token': process.env.POSTMARK_API_TOKEN,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ From: from, To: to, Subject: subject, TextBody: text })
-      });
-      if (res.ok) return 'postmark';
-      const errText = await res.text().catch(() => '');
-      console.error('Postmark error:', res.status, errText);
-    }
-
-    if (process.env.SENDGRID_API_KEY) {
-      const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          personalizations: [{ to: [{ email: to }] }],
-          from: { email: from },
-          subject,
-          content: [{ type: 'text/plain', value: text }]
-        })
-      });
-      if (res.status === 202 || res.ok) return 'sendgrid';
-      const errText = await res.text().catch(() => '');
-      console.error('SendGrid error:', res.status, errText);
-    }
-
     return false;
   } catch (err) {
     console.error('Email provider send error:', err);
@@ -434,10 +447,8 @@ router.post('/:id/generate-otp', async (req, res) => {
       return res.json({ success: true, message: 'Dev OTP (no email provided)', devOtp: otp });
     }
     
-    const subject = 'Your Secure Print OTP';
-    const text = `Your OTP is ${otp}. It expires in 5 minutes. Job: ${id}`;
-    
-    const provider = await sendEmailViaProviders({ to: email, subject, text });
+  const { subject, text, html } = buildOtpEmail(otp, id);
+  const provider = await sendEmailViaProviders({ to: email, subject, text, html });
     if (provider) {
       const providerName = provider === 'resend' ? 'Resend' : provider === 'postmark' ? 'Postmark' : provider === 'sendgrid' ? 'SendGrid' : 'email provider';
       return res.json({ success: true, message: `OTP sent via ${providerName}`, to: mask(email) });
