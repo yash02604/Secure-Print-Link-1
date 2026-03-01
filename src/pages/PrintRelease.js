@@ -1296,7 +1296,9 @@ const PrintRelease = () => {
                     if (!jobId) return toast.error('No job selected');
                     const resp = await api.post(`/api/jobs/${jobId}/generate-otp`, { email: authenticatedUser?.email || undefined });
                     setOtpSent(true);
-                    if (resp?.data?.message?.includes('Resend')) {
+                    if (resp?.data?.to) {
+                      toast.success(`OTP sent to ${resp.data.to}`);
+                    } else if (resp?.data?.message?.includes('Resend')) {
                       toast.success('OTP sent via Resend');
                     } else if (resp?.data?.message?.includes('Postmark')) {
                       toast.success('OTP sent via Postmark');
@@ -1322,7 +1324,7 @@ const PrintRelease = () => {
                         toast.error('Failed to send OTP');
                       }
                     } catch (e2) {
-                      toast.error(err?.response?.data?.error || 'Failed to send OTP');
+                      toast.error(e2?.response?.data?.error || 'Failed to send OTP');
                     }
                   }
                 }}
