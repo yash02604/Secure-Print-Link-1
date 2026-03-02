@@ -884,6 +884,7 @@ const PrintRelease = () => {
     // If we know the document exists and it's large (no dataUrl but has size), stream directly
     if (documentData && !documentData.dataUrl && documentData.size) {
       const streamUrl = `/api/jobs/${job.id}/stream?token=${job.secureToken}`;
+      setPrintedViaIframe(true);
       window.open(streamUrl, '_blank');
       return;
     }
@@ -1002,6 +1003,7 @@ const PrintRelease = () => {
     let documentData = cachedDocument || job?.document;
     if (documentData && !documentData.dataUrl && documentData.size) {
       const streamUrl = `/api/jobs/${job.id}/stream?token=${job.secureToken}`;
+      setPrintedViaIframe(true);
       const printWindow = window.open(streamUrl, '_blank');
       if (!printWindow) {
         toast.info('Document opened in a new tab for printing');
@@ -1017,6 +1019,7 @@ const PrintRelease = () => {
         }
       } catch (err) {
         const streamUrl = `/api/jobs/${job.id}/stream?token=${job.secureToken}`;
+        setPrintedViaIframe(true);
         const printWindow = window.open(streamUrl, '_blank');
         if (!printWindow) {
           toast.info('Document opened in a new tab for printing');
