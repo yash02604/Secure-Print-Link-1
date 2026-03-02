@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import api from '../api/client';
 import styled from 'styled-components';
 import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
@@ -412,16 +411,12 @@ const PrintRelease = () => {
   const [autoPrintDone, setAutoPrintDone] = useState(false);
   const [printedViaIframe, setPrintedViaIframe] = useState(false);
   const [serverJob, setServerJob] = useState(null);
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpVerified, setOtpVerified] = useState(false);
-  const [otp, setOtp] = useState('');
   
   useEffect(() => {
     if (user && !authenticatedUser) {
       setAuthenticatedUser({
         id: user.id,
         name: user.fullName || user.username || 'User',
-        email: (user.primaryEmailAddress && user.primaryEmailAddress.emailAddress) || (Array.isArray(user.emailAddresses) && user.emailAddresses[0]?.emailAddress) || '',
         role: 'User',
         department: 'General'
       });
@@ -446,6 +441,7 @@ const PrintRelease = () => {
     // Try server API validation first (permanent fix)
     const validateFromServer = async () => {
       try {
+        const { api } = await import('../api/client');
         const response = await api.get(`/api/jobs/${jobId}?token=${token}`);
         if (response.data.job) {
           setServerJob(response.data.job);
@@ -883,15 +879,7 @@ const PrintRelease = () => {
   };
 
   const handleViewDocument = async (job) => {
-    // Prefer streaming first (works without cached data)
-    try {
-      const base = api.defaults.baseURL || window.location.origin;
-      const streamUrl = new URL(`/api/jobs/${job.id}/stream?token=${job.secureToken}`, base).toString();
-      window.open(streamUrl, '_blank');
-      return;
-    } catch (_) { /* fallback below */ }
-    
-    // Fallback: use cached document or fetch dataUrl
+    // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
     if (!documentData?.dataUrl) {
       try {
@@ -915,11 +903,14 @@ const PrintRelease = () => {
     const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
     const isOffice = isWord || isExcel || isPowerPoint;
 
-    // For PDFs and images, open via blob/data URL
+    // For PDFs and images, open in a new window for viewing/printing
     if (isPdf || isImage) {
       if (isPdf) {
+        // Convert to blob URL for PDFs (avoids data URL size limits)
         const blobUrl = convertDataUrlToBlob(dataUrl);
         const printWindow = window.open(blobUrl, '_blank');
+        
+        // Cleanup blob URL after window loads
         if (blobUrl !== dataUrl && printWindow) {
           printWindow.addEventListener('load', () => {
             setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
@@ -999,22 +990,7 @@ const PrintRelease = () => {
   };
 
   const handlePrintDocument = async (job) => {
-    // Prefer streaming first (works without cached data)
-    try {
-      const base = api.defaults.baseURL || window.location.origin;
-      const streamUrl = new URL(`/api/jobs/${job.id}/stream?token=${job.secureToken}`, base).toString();
-      const win = window.open(streamUrl, '_blank');
-      if (win) {
-        win.addEventListener('load', () => {
-          setTimeout(() => {
-            try { win.focus(); win.print(); } catch (_) {}
-          }, 800);
-        });
-      }
-      return;
-    } catch (_) { /* fallback below */ }
-    
-    // Fallback: use cached document or fetch dataUrl
+    // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
     if (!documentData?.dataUrl) {
       try {
@@ -1038,32 +1014,17 @@ const PrintRelease = () => {
     const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
     const isOffice = isWord || isExcel || isPowerPoint;
 
-    // Prefer streaming for PDFs/images for printing
-    if (isPdf || isImage) {
-      try {
-        const base = api.defaults.baseURL || window.location.origin;
-        const streamUrl = new URL(`/api/jobs/${job.id}/stream?token=${job.secureToken}`, base).toString();
-        const win = window.open(streamUrl, '_blank');
-        if (win) {
-          win.addEventListener('load', () => {
-            setTimeout(() => {
-              try { win.focus(); win.print(); } catch (_) {}
-            }, 800);
-          });
-        }
-        return;
-      } catch (e) {
-        // Fallback to data URL behavior
-      }
-    }
-    
+    // For PDFs, open and print
     if (isPdf) {
+      // Convert to blob URL for PDFs (avoids data URL size limits)
       const blobUrl = convertDataUrlToBlob(dataUrl);
       const printWindow = window.open(blobUrl, '_blank');
+      
       if (printWindow) {
         printWindow.addEventListener('load', () => {
           setTimeout(() => {
             printWindow.print();
+            // Cleanup blob URL after print dialog closes
             if (blobUrl !== dataUrl) {
               setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
             }
@@ -1287,80 +1248,6 @@ const PrintRelease = () => {
               </select>
             </div>
 
-            <div style={{ marginBottom: '20px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <ActionButton
-                className="secondary"
-                onClick={async () => {
-                  try {
-                    const jobId = serverJob?.id || linkTargetJobId || userJobs[0]?.id;
-                    if (!jobId) return toast.error('No job selected');
-                    const resp = await api.post(`/api/jobs/${jobId}/generate-otp`, { email: authenticatedUser?.email || undefined });
-                    setOtpSent(true);
-                    if (resp?.data?.to) {
-                      toast.success(`OTP sent to ${resp.data.to}`);
-                    } else if (resp?.data?.message?.includes('Resend')) {
-                      toast.success('OTP sent via Resend');
-                    } else if (resp?.data?.message?.includes('Postmark')) {
-                      toast.success('OTP sent via Postmark');
-                    } else if (resp?.data?.message?.includes('SendGrid')) {
-                      toast.success('OTP sent via SendGrid');
-                    } else if (resp?.data?.devOtp) {
-                      setOtp(resp.data.devOtp);
-                      toast.info('Dev OTP prefilled from server logs');
-                    } else {
-                      toast.success('OTP sent');
-                    }
-                  } catch (err) {
-                    try {
-                      const jobId = serverJob?.id || linkTargetJobId || userJobs[0]?.id;
-                      const fallbackResp = await api.post(`/api/jobs/${jobId}/generate-otp`, {});
-                      setOtpSent(true);
-                      if (fallbackResp?.data?.devOtp) {
-                        setOtp(fallbackResp.data.devOtp);
-                        toast.info('Email provider failed. Dev OTP prefilled.');
-                      } else if (fallbackResp?.data?.message) {
-                        toast.info(fallbackResp.data.message);
-                      } else {
-                        toast.error('Failed to send OTP');
-                      }
-                    } catch (e2) {
-                      toast.error(e2?.response?.data?.error || 'Failed to send OTP');
-                    }
-                  }
-                }}
-                disabled={otpSent}
-                title={otpSent ? 'OTP already sent' : 'Send OTP to email'}
-              >
-                Send OTP
-              </ActionButton>
-              <input
-                type="text"
-                value={otp}
-                onChange={(e) => setOtp(e.target.value.trim())}
-                placeholder="Enter 6-digit OTP"
-                style={{ padding: '10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.1)', color: 'white', minWidth: '160px' }}
-                disabled={!otpSent || otpVerified}
-              />
-              <ActionButton
-                className="primary"
-                onClick={async () => {
-                  try {
-                    const jobId = serverJob?.id || linkTargetJobId || userJobs[0]?.id;
-                    if (!jobId) return toast.error('No job selected');
-                    await api.post(`/api/jobs/${jobId}/verify-otp`, { otp });
-                    setOtpVerified(true);
-                    toast.success('OTP verified');
-                  } catch (err) {
-                    toast.error(err?.response?.data?.error || 'Invalid or expired OTP');
-                  }
-                }}
-                disabled={!otpSent || otp.length !== 6 || otpVerified}
-                title={otpVerified ? 'OTP already verified' : 'Verify OTP to enable actions'}
-              >
-                Verify OTP
-              </ActionButton>
-            </div>
-
             <JobsSection>
               <JobsHeader>
                 <div className="jobs-title">Your Print Jobs</div>
@@ -1387,18 +1274,18 @@ const PrintRelease = () => {
                           <div className="job-actions">
                             <ActionButton 
                               className="secondary"
-                              onClick={() => otpVerified ? handleViewDocument(job) : toast.error('Verify OTP to view')}
-                              title={otpVerified ? "View Document" : "Verify OTP to enable"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: otpVerified ? 1 : 0.6 }}
+                              onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
+                              title={job.document?.dataUrl ? "View Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
                             >
                               <FaEye style={{ marginRight: '4px' }} />
                               View
                             </ActionButton>
                             <ActionButton 
                               className="secondary"
-                              onClick={() => otpVerified ? handlePrintDocument(job) : toast.error('Verify OTP to print')}
-                              title={otpVerified ? "Print Document" : "Verify OTP to enable"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: otpVerified ? 1 : 0.6 }}
+                              onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
+                              title={job.document?.dataUrl ? "Print Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
                             >
                               <FaPrint style={{ marginRight: '4px' }} />
                               Print

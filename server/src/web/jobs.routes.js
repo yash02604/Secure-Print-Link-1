@@ -5,103 +5,19 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
-import tls from 'tls';
-import dotenv from 'dotenv';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const uploadsDir = join(__dirname, '../../uploads');
-const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_UPLOAD_BYTES || 50 * 1024 * 1024) } });
+const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024) } });
 
-// Load environment variables from multiple possible locations
-try {
-  dotenv.config(); // default .env in current working directory
-  const projectRoot = join(__dirname, '../../..');
-  dotenv.config({ path: join(projectRoot, '.env.local'), override: false });
-  dotenv.config({ path: join(projectRoot, '.env'), override: false });
-  const serverRoot = join(__dirname, '../..');
-  dotenv.config({ path: join(serverRoot, '.env.local'), override: false });
-  dotenv.config({ path: join(serverRoot, '.env'), override: false });
-} catch (_) {}
 const router = Router();
 
 // Encryption helpers (AES-256-GCM with per-job keys)
-// REST email provider: Resend (preferred)
-const buildOtpEmail = (otp, jobId) => {
-  const subject = 'Your Secure Print OTP';
-  const text = `Your OTP is ${otp}. It expires in 5 minutes. Job: ${jobId}`;
-  const html = [
-    '<div style="font-family: Arial, Helvetica, sans-serif; max-width: 480px; margin: 0 auto; padding: 16px;">',
-    '<h2 style="margin: 0 0 8px; color: #111;">Secure Print Verification</h2>',
-    '<p style="margin: 0 0 16px; color: #333;">Use the one-time code below to confirm your email and unlock printing.</p>',
-    `<div style="font-size: 28px; letter-spacing: 6px; font-weight: 700; color: #0b5cff; margin: 12px 0; text-align: center;">${otp}</div>`,
-    '<p style="margin: 12px 0; color: #333;">This code expires in <strong>5 minutes</strong>.</p>',
-    `<p style="margin: 12px 0; color: #666;">Job: <span style="font-family: monospace;">${jobId}</span></p>`,
-    '<p style="margin: 16px 0; font-size: 12px; color: #888;">If you did not request this, you can ignore this email.</p>',
-    '</div>'
-  ].join('');
-  return { subject, text, html };
-};
-
-const sendEmailViaProviders = async ({ to, subject, text, html }) => {
-  try {
-    const fromEmail = process.env.FROM_EMAIL || 'no-reply@example.com';
-    const fromName = process.env.FROM_NAME || 'Secure Print Link';
-    const from = `${fromName} <${fromEmail}>`;
-    const preferred = (process.env.EMAIL_PROVIDER || '').toLowerCase();
-    const tryOrder = (() => {
-      if (preferred === 'sendgrid') return ['sendgrid', 'resend', 'postmark'];
-      if (preferred === 'postmark') return ['postmark', 'resend', 'sendgrid'];
-      if (preferred === 'resend') return ['resend', 'postmark', 'sendgrid'];
-      if (process.env.SENDGRID_API_KEY) return ['sendgrid', 'resend', 'postmark'];
-      return ['resend', 'postmark', 'sendgrid'];
-    })();
-    for (const provider of tryOrder) {
-      if (provider === 'resend' && process.env.RESEND_API_KEY) {
-        const res = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ from, to, subject, text, html })
-        });
-        if (res.ok) return 'resend';
-      }
-      if (provider === 'postmark' && process.env.POSTMARK_API_TOKEN) {
-        const res = await fetch('https://api.postmarkapp.com/email', {
-          method: 'POST',
-          headers: { 'X-Postmark-Server-Token': process.env.POSTMARK_API_TOKEN, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ From: fromEmail, To: to, Subject: subject, TextBody: text, HtmlBody: html })
-        });
-        if (res.ok) return 'postmark';
-      }
-      if (provider === 'sendgrid' && process.env.SENDGRID_API_KEY) {
-        const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            personalizations: [{ to: [{ email: to }] }],
-            from: { email: fromEmail, name: fromName },
-            subject,
-            content: [
-              { type: 'text/plain', value: text },
-              { type: 'text/html', value: html }
-            ]
-          })
-        });
-        if (res.status === 202 || res.ok) return 'sendgrid';
-      }
-    }
-    return false;
-  } catch (err) {
-    console.error('Email provider send error:', err);
-    return false;
-  }
-};
-
 const getMasterKey = () => {
   const rawKey = process.env.ENCRYPTION_KEY || 'default-encryption-key-change-me';
   return crypto.createHash('sha256').update(rawKey).digest();
 };
-
 
 const deriveJobKey = (jobId) => {
   const masterKey = getMasterKey();
@@ -418,160 +334,6 @@ router.get('/:id', (req, res) => {
   }
 
   res.json({ job });
-});
-
-// Generate OTP for a job (5-minute expiry)
-router.post('/:id/generate-otp', async (req, res) => {
-  try {
-    const db = req.db;
-    const { id } = req.params;
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
-    const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-    
-    db.prepare('UPDATE jobs SET otpHash = ?, otpExpiresAt = ?, otpAttempts = 0, otpVerified = 0 WHERE id = ?')
-      .run(otpHash, expiresAt, id);
-    
-    const { email } = req.body || {};
-    const mask = (addr) => {
-      if (!addr || !addr.includes('@')) return '';
-      const [local, domain] = addr.split('@');
-      const maskedLocal = local.length <= 2 ? '*'.repeat(local.length) : local[0] + '*'.repeat(Math.max(1, local.length - 2)) + local.slice(-1);
-      return `${maskedLocal}@${domain}`;
-    };
-    
-    if (!email) {
-      return res.json({ success: true, message: 'Dev OTP (no email provided)', devOtp: otp });
-    }
-    
-  const { subject, text, html } = buildOtpEmail(otp, id);
-  const provider = await sendEmailViaProviders({ to: email, subject, text, html });
-    if (provider) {
-      const providerName = provider === 'resend' ? 'Resend' : provider === 'postmark' ? 'Postmark' : provider === 'sendgrid' ? 'SendGrid' : 'email provider';
-      return res.json({ success: true, message: `OTP sent via ${providerName}`, to: mask(email) });
-    }
-    
-    return res.json({ success: true, message: 'Provider failed. Using dev OTP.', devOtp: otp, to: mask(email) });
-  } catch (err) {
-    console.error('Generate OTP error:', err);
-    // Never fail the flow: always provide dev OTP if anything goes wrong
-    const fallbackOtp = String(Math.floor(100000 + Math.random() * 900000));
-    return res.json({ success: true, message: 'Fallback dev OTP due to server error.', devOtp: fallbackOtp });
-  }
-});
-
-// Verify OTP for a job
-router.post('/:id/verify-otp', (req, res) => {
-  const db = req.db;
-  const { id } = req.params;
-  const { otp } = req.body || {};
-  if (!otp || !/^\d{6}$/.test(String(otp))) {
-    return res.status(400).json({ error: 'Invalid OTP format' });
-  }
-  
-  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
-  
-  if (!job.otpHash || !job.otpExpiresAt) {
-    return res.status(400).json({ error: 'No OTP requested for this job' });
-  }
-  
-  const now = Date.now();
-  const expires = Date.parse(job.otpExpiresAt);
-  if (Number.isFinite(expires) && now > expires) {
-    db.prepare('UPDATE jobs SET otpHash = NULL, otpExpiresAt = NULL, otpAttempts = 0, otpVerified = 0 WHERE id = ?').run(id);
-    return res.status(400).json({ error: 'OTP expired. Request a new one.' });
-  }
-  
-  const submittedHash = crypto.createHash('sha256').update(String(otp)).digest('hex');
-  const attempts = (job.otpAttempts ?? 0) + 1;
-  if (attempts > 5) {
-    db.prepare('UPDATE jobs SET otpHash = NULL, otpExpiresAt = NULL, otpAttempts = 0, otpVerified = 0 WHERE id = ?').run(id);
-    return res.status(429).json({ error: 'Too many attempts. OTP reset.' });
-  }
-  
-  if (submittedHash !== job.otpHash) {
-    db.prepare('UPDATE jobs SET otpAttempts = ? WHERE id = ?').run(attempts, id);
-    return res.status(400).json({ error: 'Incorrect OTP' });
-  }
-  
-  db.prepare('UPDATE jobs SET otpVerified = 1 WHERE id = ?').run(id);
-  return res.json({ success: true, message: 'OTP verified' });
-});
-
-// Stream decrypted document (counts as the single allowed view)
-router.get('/:id/stream', (req, res) => {
-  const db = req.db;
-  const { id } = req.params;
-  const { token } = req.query;
-  
-  activeOperations.add(id);
-  try {
-    const currentServerTime = Date.now();
-    const metadata = expirationMetadata.get(id);
-    if (metadata) {
-      if (metadata.token !== token) {
-        return res.status(403).json({ error: 'Invalid token' });
-      }
-      if (currentServerTime >= metadata.expiresAt) {
-        expirationMetadata.delete(id);
-        if (metadata.filePath) {
-          try { if (fs.existsSync(metadata.filePath)) fs.unlinkSync(metadata.filePath); } catch (_) {}
-        }
-        return res.status(410).json({ error: 'Print link has expired' });
-      }
-    }
-    
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
-    if (job.otpVerified !== 1) return res.status(403).json({ error: 'OTP verification required' });
-    
-    // SINGLE-USE ENFORCEMENT: If already viewed, block
-    if (job.viewCount > 0) {
-      return res.status(403).json({ error: 'Document already viewed (one-time only)', alreadyViewed: true });
-    }
-    
-    // Mark as viewed once
-    const now = new Date().toISOString();
-    db.prepare('UPDATE jobs SET viewCount = viewCount + 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
-      .run(now, now, id);
-    if (metadata) {
-      metadata.viewCount = 1;
-      metadata.firstViewedAt = now;
-      expirationMetadata.set(id, metadata);
-    }
-    
-    // Fetch document encrypted content
-    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
-    if (document) {
-      const decryptedBuffer = decryptDocumentForJob(document.content, id);
-      res.setHeader('Content-Type', document.mimeType || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${document.filename || job.documentName || 'document'}"`);
-      res.setHeader('Content-Length', decryptedBuffer.length);
-      return res.status(200).send(decryptedBuffer);
-    } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
-      // Fallback: stream raw file from filesystem (legacy)
-      const stat = fs.statSync(metadata.filePath);
-      res.setHeader('Content-Type', metadata.mimetype || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${metadata.originalname || job.documentName || 'document'}"`);
-      res.setHeader('Content-Length', stat.size);
-      const stream = fs.createReadStream(metadata.filePath);
-      stream.pipe(res);
-      stream.on('error', () => res.status(500).end());
-      return;
-    }
-    
-    return res.status(404).json({ error: 'Document not found' });
-  } catch (err) {
-    console.error('Error streaming document:', err);
-    return res.status(500).json({ error: 'Failed to stream document' });
-  } finally {
-    activeOperations.delete(id);
-  }
 });
 
 // View job document (single-use only)
