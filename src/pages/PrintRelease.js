@@ -883,8 +883,15 @@ const PrintRelease = () => {
     let documentData = cachedDocument || job?.document;
     // If we know the document exists and it's large (no dataUrl but has size), stream directly
     if (documentData && !documentData.dataUrl && documentData.size) {
-      const streamUrl = `/api/jobs/${job.id}/stream?token=${job.secureToken}`;
+      const urlToken = new URLSearchParams(window.location.search).get('token');
+      const token = job.secureToken || urlToken;
+      if (!token) {
+        toast.error('Missing token for streaming');
+        return;
+      }
+      const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
       setPrintedViaIframe(true);
+      toast.info('Opening via secure stream');
       window.open(streamUrl, '_blank');
       return;
     }
@@ -897,7 +904,14 @@ const PrintRelease = () => {
         }
       } catch (err) {
         // Absolute fallback: attempt stream regardless
-        const streamUrl = `/api/jobs/${job.id}/stream?token=${job.secureToken}`;
+        const urlToken = new URLSearchParams(window.location.search).get('token');
+        const token = job.secureToken || urlToken;
+        if (!token) {
+          toast.error('Missing token for streaming');
+          return;
+        }
+        const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
+        toast.info('Opening via secure stream');
         window.open(streamUrl, '_blank');
         return;
       }
@@ -1002,8 +1016,15 @@ const PrintRelease = () => {
     // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
     if (documentData && !documentData.dataUrl && documentData.size) {
-      const streamUrl = `/api/jobs/${job.id}/stream?token=${job.secureToken}`;
+      const urlToken = new URLSearchParams(window.location.search).get('token');
+      const token = job.secureToken || urlToken;
+      if (!token) {
+        toast.error('Missing token for streaming');
+        return;
+      }
+      const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
       setPrintedViaIframe(true);
+      toast.info('Opening via secure stream for printing');
       const printWindow = window.open(streamUrl, '_blank');
       if (!printWindow) {
         toast.info('Document opened in a new tab for printing');
@@ -1018,8 +1039,15 @@ const PrintRelease = () => {
           setCachedDocument(fetched);
         }
       } catch (err) {
-        const streamUrl = `/api/jobs/${job.id}/stream?token=${job.secureToken}`;
+        const urlToken = new URLSearchParams(window.location.search).get('token');
+        const token = job.secureToken || urlToken;
+        if (!token) {
+          toast.error('Missing token for streaming');
+          return;
+        }
+        const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
         setPrintedViaIframe(true);
+        toast.info('Opening via secure stream for printing');
         const printWindow = window.open(streamUrl, '_blank');
         if (!printWindow) {
           toast.info('Document opened in a new tab for printing');
