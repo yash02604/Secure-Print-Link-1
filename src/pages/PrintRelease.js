@@ -881,6 +881,12 @@ const PrintRelease = () => {
   const handleViewDocument = async (job) => {
     // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
+    // If we know the document exists and it's large (no dataUrl but has size), stream directly
+    if (documentData && !documentData.dataUrl && documentData.size) {
+      const streamUrl = `/api/jobs/${job.id}/stream?token=${job.secureToken}`;
+      window.open(streamUrl, '_blank');
+      return;
+    }
     if (!documentData?.dataUrl) {
       try {
         const fetched = await viewPrintJob(job.id, job.secureToken, authenticatedUser.id);
@@ -889,7 +895,9 @@ const PrintRelease = () => {
           setCachedDocument(fetched);
         }
       } catch (err) {
-        toast.error(err.message || 'Failed to fetch document for preview');
+        // Absolute fallback: attempt stream regardless
+        const streamUrl = `/api/jobs/${job.id}/stream?token=${job.secureToken}`;
+        window.open(streamUrl, '_blank');
         return;
       }
     }
@@ -992,6 +1000,14 @@ const PrintRelease = () => {
   const handlePrintDocument = async (job) => {
     // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
+    if (documentData && !documentData.dataUrl && documentData.size) {
+      const streamUrl = `/api/jobs/${job.id}/stream?token=${job.secureToken}`;
+      const printWindow = window.open(streamUrl, '_blank');
+      if (!printWindow) {
+        toast.info('Document opened in a new tab for printing');
+      }
+      return;
+    }
     if (!documentData?.dataUrl) {
       try {
         const fetched = await viewPrintJob(job.id, job.secureToken, authenticatedUser.id);
@@ -1000,7 +1016,11 @@ const PrintRelease = () => {
           setCachedDocument(fetched);
         }
       } catch (err) {
-        toast.error(err.message || 'Failed to fetch document for printing');
+        const streamUrl = `/api/jobs/${job.id}/stream?token=${job.secureToken}`;
+        const printWindow = window.open(streamUrl, '_blank');
+        if (!printWindow) {
+          toast.info('Document opened in a new tab for printing');
+        }
         return;
       }
     }
@@ -1274,18 +1294,18 @@ const PrintRelease = () => {
                           <div className="job-actions">
                             <ActionButton 
                               className="secondary"
-                              onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
-                              title={job.document?.dataUrl ? "View Document" : "No preview available"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                              onClick={() => handleViewDocument(job)}
+                              title="View Document"
+                              style={{ padding: '8px 12px', minWidth: 'auto' }}
                             >
                               <FaEye style={{ marginRight: '4px' }} />
                               View
                             </ActionButton>
                             <ActionButton 
                               className="secondary"
-                              onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
-                              title={job.document?.dataUrl ? "Print Document" : "No preview available"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                              onClick={() => handlePrintDocument(job)}
+                              title="Print Document"
+                              style={{ padding: '8px 12px', minWidth: 'auto' }}
                             >
                               <FaPrint style={{ marginRight: '4px' }} />
                               Print
