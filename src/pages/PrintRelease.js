@@ -901,6 +901,18 @@ const PrintRelease = () => {
         if (fetched?.dataUrl) {
           documentData = fetched;
           setCachedDocument(fetched);
+        } else {
+          const urlToken = new URLSearchParams(window.location.search).get('token');
+          const token = job.secureToken || urlToken;
+          if (!token) {
+            toast.error('Missing token for streaming');
+            return;
+          }
+          const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
+          setPrintedViaIframe(true);
+          toast.info('Opening via secure stream');
+          window.open(streamUrl, '_blank');
+          return;
         }
       } catch (err) {
         // Absolute fallback: attempt stream regardless
@@ -1037,6 +1049,21 @@ const PrintRelease = () => {
         if (fetched?.dataUrl) {
           documentData = fetched;
           setCachedDocument(fetched);
+        } else {
+          const urlToken = new URLSearchParams(window.location.search).get('token');
+          const token = job.secureToken || urlToken;
+          if (!token) {
+            toast.error('Missing token for streaming');
+            return;
+          }
+          const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
+          setPrintedViaIframe(true);
+          toast.info('Opening via secure stream for printing');
+          const printWindow = window.open(streamUrl, '_blank');
+          if (!printWindow) {
+            toast.info('Document opened in a new tab for printing');
+          }
+          return;
         }
       } catch (err) {
         const urlToken = new URLSearchParams(window.location.search).get('token');
