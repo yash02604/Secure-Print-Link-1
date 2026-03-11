@@ -662,7 +662,7 @@ const PrintJobSubmission = () => {
                 </div>
                 <div className="upload-hint">
                   or click to select a file<br/>
-                  <strong>Supported formats:</strong> PDF, Word, Excel, PowerPoint, Text, Images, RTF, JSON, HTML
+                  <strong>Supported formats:</strong> PDF,( Word, Excel, PowerPoint(it can securely download)), Images.
                 </div>
                 {validationErrors.file && (
                   <div style={{ color: 'var(--error-color)', marginTop: '10px', fontSize: '14px', fontWeight: '600' }}>
