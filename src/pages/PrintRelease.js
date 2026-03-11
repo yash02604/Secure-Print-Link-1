@@ -880,6 +880,29 @@ const PrintRelease = () => {
   const handleViewDocument = async (job) => {
     // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
+    // Local-only jobs (created when API submission failed) never exist on the server.
+    // Do not attempt to call backend /stream for these IDs.
+    if (String(job.id).startsWith('local_')) {
+      if (!documentData?.dataUrl) {
+        toast.error('Local job content is not available to preview. Please resubmit while online.');
+        return;
+      }
+      const { dataUrl, mimeType, name } = documentData;
+      const isPdf = (mimeType || '').includes('pdf');
+      const isImage = (mimeType || '').startsWith('image/');
+      const isText = (mimeType || '').includes('text/');
+      const isWord = /msword|wordprocessingml/.test(mimeType || '');
+      const isExcel = /excel|spreadsheetml/.test(mimeType || '');
+      const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
+      const isOffice = isWord || isExcel || isPowerPoint;
+      if (isPdf || isImage || isText || isOffice) {
+        // Reuse existing rendering paths for small/dataUrl-backed documents
+        const jobLike = { document: documentData };
+        return handleViewDocument(jobLike);
+      }
+      window.open(dataUrl, '_blank');
+      return;
+    }
     // If we know the document exists and it's large (no dataUrl but has size), stream directly
     if (documentData && !documentData.dataUrl && documentData.size) {
       const urlToken = new URLSearchParams(window.location.search).get('token');
@@ -1026,6 +1049,43 @@ const PrintRelease = () => {
   const handlePrintDocument = async (job) => {
     // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
+    if (String(job.id).startsWith('local_')) {
+      if (!documentData?.dataUrl) {
+        toast.error('Local job content is not available for printing. Please resubmit while online.');
+        return;
+      }
+      const { dataUrl, mimeType, name } = documentData;
+      const isPdf = (mimeType || '').includes('pdf');
+      const isImage = (mimeType || '').startsWith('image/');
+      const isText = (mimeType || '').includes('text/');
+      const isWord = /msword|wordprocessingml/.test(mimeType || '');
+      const isExcel = /excel|spreadsheetml/.test(mimeType || '');
+      const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
+      const isOffice = isWord || isExcel || isPowerPoint;
+      if (isPdf) {
+        const blobUrl = convertDataUrlToBlob(dataUrl);
+        const printWindow = window.open(blobUrl, '_blank');
+        if (printWindow) {
+          printWindow.addEventListener('load', () => {
+            setTimeout(() => printWindow.print(), 500);
+          });
+        }
+        return;
+      }
+      if (isImage || isText || isOffice) {
+        // Let user print from the opened window/application
+        const win = window.open(dataUrl, '_blank');
+        if (win) {
+          toast.info('Use the browser or application print option to print this local document.');
+        }
+        return;
+      }
+      const win = window.open(dataUrl, '_blank');
+      if (win) {
+        toast.info('Use the browser print option to print this local document.');
+      }
+      return;
+    }
     if (documentData && !documentData.dataUrl && documentData.size) {
       const urlToken = new URLSearchParams(window.location.search).get('token');
       const token = job.secureToken || urlToken;
