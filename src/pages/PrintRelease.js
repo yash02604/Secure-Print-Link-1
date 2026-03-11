@@ -398,7 +398,7 @@ const EmptyState = styled.div`
 const PrintRelease = () => {
   const { loginWithPin, mockUsers } = useAuth();
   const { user } = useUser();
-  const { printJobs, releasePrintJob, viewPrintJob, printers, validateTokenAndExpiration, getLocalJobFile } = usePrintJob();
+  const { printJobs, releasePrintJob, viewPrintJob, printers, validateTokenAndExpiration } = usePrintJob();
   const params = useParams();
   const location = useLocation();
   const [authMethod, setAuthMethod] = useState(null);
@@ -880,51 +880,7 @@ const PrintRelease = () => {
   const handleViewDocument = async (job) => {
     let documentData = cachedDocument || job?.document;
     if (String(job.id).startsWith('local_')) {
-      if (!documentData?.dataUrl) {
-        const localFile = getLocalJobFile(job.id);
-        if (localFile) {
-          const mimeType = localFile.type || documentData?.mimeType || documentData?.mimetype;
-          const url = URL.createObjectURL(localFile);
-          const isPdf = (mimeType || '').includes('pdf');
-          const isImage = (mimeType || '').startsWith('image/');
-          const isText = (mimeType || '').includes('text/');
-          const isWord = /msword|wordprocessingml/.test(mimeType || '');
-          const isExcel = /excel|spreadsheetml/.test(mimeType || '');
-          const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
-          const isOffice = isWord || isExcel || isPowerPoint;
-          if (isPdf) {
-            const win = window.open(url, '_blank');
-            if (win) {
-              win.addEventListener('load', () => {
-                setTimeout(() => URL.revokeObjectURL(url), 5000);
-              });
-            }
-            return;
-          }
-          if (isImage || isText || isOffice) {
-            window.open(url, '_blank');
-            return;
-          }
-          window.open(url, '_blank');
-          return;
-        }
-        toast.error('Local job content is not available to preview. Please resubmit while online.');
-        return;
-      }
-      const { dataUrl, mimeType } = documentData;
-      const isPdf = (mimeType || '').includes('pdf');
-      const isImage = (mimeType || '').startsWith('image/');
-      const isText = (mimeType || '').includes('text/');
-      const isWord = /msword|wordprocessingml/.test(mimeType || '');
-      const isExcel = /excel|spreadsheetml/.test(mimeType || '');
-      const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
-      const isOffice = isWord || isExcel || isPowerPoint;
-      if (isPdf || isImage || isText || isOffice) {
-        // Reuse existing rendering paths for small/dataUrl-backed documents
-        const jobLike = { document: documentData };
-        return handleViewDocument(jobLike);
-      }
-      window.open(dataUrl, '_blank');
+      toast.error('This local job cannot be opened. Please submit the document again.');
       return;
     }
     if (!documentData?.dataUrl) {
@@ -1041,73 +997,7 @@ const PrintRelease = () => {
   const handlePrintDocument = async (job) => {
     let documentData = cachedDocument || job?.document;
     if (String(job.id).startsWith('local_')) {
-      if (!documentData?.dataUrl) {
-        const localFile = getLocalJobFile(job.id);
-        if (!localFile) {
-          toast.error('Local job content is not available for printing. Please resubmit while online.');
-          return;
-        }
-        const mimeType = localFile.type || documentData?.mimeType || documentData?.mimetype;
-        const url = URL.createObjectURL(localFile);
-        const isPdf = (mimeType || '').includes('pdf');
-        const isImage = (mimeType || '').startsWith('image/');
-        const isText = (mimeType || '').includes('text/');
-        const isWord = /msword|wordprocessingml/.test(mimeType || '');
-        const isExcel = /excel|spreadsheetml/.test(mimeType || '');
-        const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
-        const isOffice = isWord || isExcel || isPowerPoint;
-        if (isPdf) {
-          const printWindow = window.open(url, '_blank');
-          if (printWindow) {
-            printWindow.addEventListener('load', () => {
-              setTimeout(() => printWindow.print(), 500);
-            });
-          }
-          return;
-        }
-        if (isImage || isText || isOffice) {
-          const win = window.open(url, '_blank');
-          if (win) {
-            toast.info('Use the browser or application print option to print this local document.');
-          }
-          return;
-        }
-        const win = window.open(url, '_blank');
-        if (win) {
-          toast.info('Use the browser print option to print this local document.');
-        }
-        return;
-      }
-      const { dataUrl, mimeType } = documentData;
-      const isPdf = (mimeType || '').includes('pdf');
-      const isImage = (mimeType || '').startsWith('image/');
-      const isText = (mimeType || '').includes('text/');
-      const isWord = /msword|wordprocessingml/.test(mimeType || '');
-      const isExcel = /excel|spreadsheetml/.test(mimeType || '');
-      const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
-      const isOffice = isWord || isExcel || isPowerPoint;
-      if (isPdf) {
-        const blobUrl = convertDataUrlToBlob(dataUrl);
-        const printWindow = window.open(blobUrl, '_blank');
-        if (printWindow) {
-          printWindow.addEventListener('load', () => {
-            setTimeout(() => printWindow.print(), 500);
-          });
-        }
-        return;
-      }
-      if (isImage || isText || isOffice) {
-        // Let user print from the opened window/application
-        const win = window.open(dataUrl, '_blank');
-        if (win) {
-          toast.info('Use the browser or application print option to print this local document.');
-        }
-        return;
-      }
-      const win = window.open(dataUrl, '_blank');
-      if (win) {
-        toast.info('Use the browser print option to print this local document.');
-      }
+      toast.error('This local job cannot be printed. Please submit the document again.');
       return;
     }
     if (!documentData?.dataUrl) {
