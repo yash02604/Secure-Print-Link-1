@@ -481,7 +481,7 @@ router.post('/:id/view', (req, res) => {
     let documentData = null;
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      const dataUrlMax = +(process.env.DATA_URL_MAX_BYTES || 2 * 1024 * 1024);
+      const dataUrlMax = +(process.env.DATA_URL_MAX_BYTES || 20 * 1024 * 1024);
       if (!document.size || document.size <= dataUrlMax) {
         const decryptedBuffer = decryptDocumentForJob(document.content, id);
         const base64 = decryptedBuffer.toString('base64');
