@@ -133,6 +133,11 @@ router.post('/', (req, res, next) => {
   
   if (!userId || !documentName) return res.status(400).json({ error: 'Missing required fields' });
 
+  if (req.file && req.file.size > 20 * 1024 * 1024) {
+    try { if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); } catch (_) {}
+    return res.status(413).json({ error: 'File exceeds 20MB upload limit' });
+  }
+
   const id = nanoid();
   activeOperations.add(id); // Lock job during creation
 
