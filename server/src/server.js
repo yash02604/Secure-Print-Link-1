@@ -31,8 +31,7 @@ const io = new Server(httpServer, {
 const PORT = process.env.PORT || 4000;
 
 app.use(cors());
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ limit: '20mb', extended: true }));
+app.use(express.json({ limit: '10mb' }));
 app.use(morgan('dev'));
 
 // initialize DB
@@ -73,10 +72,6 @@ app.post('/upload', authMiddleware, upload.single('file'), (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'File is required' });
-    }
-
-    if (req.file.size > 20 * 1024 * 1024) {
-      return res.status(413).json({ error: 'File exceeds 20MB upload limit' });
     }
 
     const allowedMimeTypes = new Set([

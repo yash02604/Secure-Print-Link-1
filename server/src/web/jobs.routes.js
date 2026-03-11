@@ -133,11 +133,6 @@ router.post('/', (req, res, next) => {
   
   if (!userId || !documentName) return res.status(400).json({ error: 'Missing required fields' });
 
-  if (req.file && req.file.size > 20 * 1024 * 1024) {
-    try { if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); } catch (_) {}
-    return res.status(413).json({ error: 'File exceeds 20MB upload limit' });
-  }
-
   const id = nanoid();
   activeOperations.add(id); // Lock job during creation
 
@@ -303,14 +298,15 @@ router.get('/:id', (req, res) => {
   try {
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
+      // Decrypt content in memory for preview (document is stored encrypted at rest)
+      const decryptedBuffer = decryptDocumentForJob(document.content, id);
+      const base64 = decryptedBuffer.toString('base64');
       job.document = {
+        dataUrl: `data:${document.mimeType};base64,${base64}`,
         mimeType: document.mimeType,
         name: document.filename,
         size: document.size
       };
-      const decryptedBuffer = decryptDocumentForJob(document.content, id);
-      const base64 = decryptedBuffer.toString('base64');
-      job.document.dataUrl = `data:${document.mimeType};base64,${base64}`;
       
       // Fetch analysis
       const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
@@ -338,62 +334,6 @@ router.get('/:id', (req, res) => {
   }
 
   res.json({ job });
-});
-
-// Stream decrypted document contents for large files (single-use)
-router.get('/:id/stream', (req, res) => {
-  const db = req.db;
-  const { id } = req.params;
-  const { token } = req.query;
-  
-  activeOperations.add(id);
-  try {
-    const currentServerTime = Date.now();
-    const metadata = expirationMetadata.get(id);
-    if (metadata) {
-      if (metadata.token !== token) {
-        return res.status(403).json({ error: 'Invalid token' });
-      }
-      if (currentServerTime >= metadata.expiresAt) {
-        expirationMetadata.delete(id);
-        if (metadata.filePath) {
-          try {
-            if (fs.existsSync(metadata.filePath)) fs.unlinkSync(metadata.filePath);
-          } catch (_) {}
-        }
-        return res.status(410).json({ error: 'Print link has expired' });
-      }
-    }
-    
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
-    
-    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
-    if (document) {
-      const decryptedBuffer = decryptDocumentForJob(document.content, id);
-      res.setHeader('Content-Type', document.mimeType || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${document.filename || job.documentName || 'document'}"`);
-      res.setHeader('Content-Length', decryptedBuffer.length);
-      return res.status(200).send(decryptedBuffer);
-    } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
-      const stat = fs.statSync(metadata.filePath);
-      res.setHeader('Content-Type', metadata.mimetype || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${metadata.originalname || job.documentName || 'document'}"`);
-      res.setHeader('Content-Length', stat.size);
-      const stream = fs.createReadStream(metadata.filePath);
-      stream.pipe(res);
-      stream.on('error', () => res.status(500).end());
-      return;
-    }
-    
-    return res.status(404).json({ error: 'Document not found' });
-  } catch (err) {
-    console.error('Error streaming document:', err);
-    return res.status(500).json({ error: 'Failed to stream document' });
-  } finally {
-    activeOperations.delete(id);
-  }
 });
 
 // View job document (single-use only)
@@ -477,6 +417,7 @@ router.post('/:id/view', (req, res) => {
     let documentData = null;
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
+      // Decrypt content in memory for preview, document is stored encrypted at rest
       const decryptedBuffer = decryptDocumentForJob(document.content, id);
       const base64 = decryptedBuffer.toString('base64');
       documentData = {

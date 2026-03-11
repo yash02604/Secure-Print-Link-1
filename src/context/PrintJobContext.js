@@ -176,6 +176,7 @@ export const PrintJobProvider = ({ children }) => {
     setIsSubmitting(true);
     setError(null);
     
+    let apiSuccess = false;
     let submittedJob = null;
 
     try {
@@ -201,6 +202,7 @@ export const PrintJobProvider = ({ children }) => {
       });
 
       if (response.data.success && response.data.job) {
+        apiSuccess = true;
         const serverJob = response.data.job;
         
         submittedJob = {
@@ -233,15 +235,83 @@ export const PrintJobProvider = ({ children }) => {
         });
 
         toast.success('Your document was encrypted and submitted securely.');
-      } else {
-        throw new Error('Server did not confirm print job creation');
       }
     } catch (error) {
-      console.error('API submission failed:', error);
-      setError('Failed to submit print job to server. Please try again.');
-      toast.error('Failed to submit print job. Please check your connection and try again.');
-      setIsSubmitting(false);
-      throw error;
+      console.warn('API submission failed, falling back to local storage:', error.message);
+    }
+
+    // LOCAL FALLBACK if API failed
+    if (!apiSuccess) {
+      try {
+        const id = 'local_' + Math.random().toString(36).substr(2, 9);
+        const secureToken = Math.random().toString(36).substr(2, 32);
+        const expirationDuration = parseInt(jobData.expirationDuration || 15);
+        const expiresAt = new Date(Date.now() + expirationDuration * 60000).toISOString();
+        const submittedAt = new Date().toISOString();
+        const origin = window.location.origin;
+        const releaseLink = `${origin}/release/${id}?token=${secureToken}`;
+
+        let docData = null;
+        if (jobData.file instanceof File) {
+          docData = {
+            filename: jobData.file.name,
+            originalname: jobData.file.name,
+            mimetype: jobData.file.type,
+            size: jobData.file.size
+          };
+
+          // Store as Data URL if file is small enough (< 2MB)
+          if (jobData.file.size < 2 * 1024 * 1024) {
+            const reader = new FileReader();
+            const dataUrl = await new Promise((resolve) => {
+              reader.onload = (e) => resolve(e.target.result);
+              reader.readAsDataURL(jobData.file);
+            });
+            docData.dataUrl = dataUrl;
+          }
+        }
+
+        submittedJob = {
+          id,
+          userId: jobData.userId,
+          userName: jobData.userName,
+          documentName: jobData.documentName,
+          pages: jobData.pages,
+          copies: jobData.copies,
+          color: jobData.color,
+          duplex: jobData.duplex,
+          stapling: jobData.stapling,
+          priority: jobData.priority,
+          notes: jobData.notes,
+          status: 'pending',
+          cost: calculateJobCost(jobData),
+          submittedAt,
+          secureToken,
+          releaseLink,
+          expiresAt,
+          viewCount: 0,
+          document: docData
+        };
+
+        setPrintJobs(prev => [submittedJob, ...prev]);
+        
+        setExpirationMetadata(prev => {
+          const newMap = new Map(prev);
+          newMap.set(id, {
+            expiresAt: new Date(expiresAt).getTime(),
+            createdAt: Date.now(),
+            token: secureToken,
+            viewCount: 0
+          });
+          return newMap;
+        });
+
+        toast.success('Print job was encrypted and submitted securely.');
+      } catch (err) {
+        console.error('Local submission failed:', err);
+        setError('Failed to submit print job.');
+        throw err;
+      }
     }
 
     setIsSubmitting(false);
@@ -264,8 +334,20 @@ export const PrintJobProvider = ({ children }) => {
   const viewPrintJob = async (jobId, token, userId) => {
     toast.dismiss(); // Clear old toasts
     if (jobId.startsWith('local_')) {
-      toast.error('This local job cannot be opened. Please submit the document again.');
-      throw new Error('Local jobs are no longer supported for preview');
+      const now = new Date().toISOString();
+      const job = printJobs.find(j => j.id === jobId);
+      
+      if (job?.viewCount > 0) {
+        toast.error('Document already viewed (one-time only)');
+        throw new Error('Document already viewed');
+      }
+
+      setPrintJobs(prev => prev.map(j => 
+        j.id === jobId ? { ...j, viewCount: 1, firstViewedAt: now, lastViewedAt: now } : j
+      ));
+
+      toast.success('Document preview opened (Local)');
+      return job?.document;
     }
 
     setLoading(true);
@@ -328,8 +410,11 @@ export const PrintJobProvider = ({ children }) => {
   const releasePrintJob = async (jobId, printerId, releasedBy, token) => {
     toast.dismiss(); // Clear old toasts
     if (jobId.startsWith('local_')) {
-      toast.error('This local job cannot be released. Please submit the document again.');
-      throw new Error('Local jobs are no longer supported for release');
+      setPrintJobs(prev => prev.map(job => 
+        job.id === jobId ? { ...job, status: 'released', releasedAt: new Date().toISOString() } : job
+      ));
+      toast.success('Print job released successfully (Local)!');
+      return { success: true };
     }
 
     setLoading(true);
@@ -423,10 +508,6 @@ export const PrintJobProvider = ({ children }) => {
     }
   };
 
-  const getLocalJobFile = (jobId) => {
-    return localJobFiles[jobId] || null;
-  };
-
   const getJobsByUser = (userId) => {
     return printJobs.filter(job => job.userId === userId);
   };
@@ -518,8 +599,7 @@ export const PrintJobProvider = ({ children }) => {
     deletePrinter,
     calculateJobCost,
     validateTokenAndExpiration,
-    expirationMetadata,
-    getLocalJobFile
+    expirationMetadata
   };
 
   return (

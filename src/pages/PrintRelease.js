@@ -18,11 +18,6 @@ const ReleaseContainer = styled.div`
   padding: 20px;
   max-width: 1000px;
   margin: 0 auto;
-  
-  @media (max-width: 768px) {
-    padding: 12px;
-    max-width: 100%;
-  }
 `;
 
 const PageHeader = styled.div`
@@ -39,11 +34,6 @@ const PageHeader = styled.div`
   p {
     color: #7f8c8d;
     font-size: 16px;
-  }
-  
-  @media (max-width: 768px) {
-    h1 { font-size: 24px; }
-    p { font-size: 14px; }
   }
 `;
 
@@ -64,11 +54,6 @@ const PrinterInterface = styled.div`
     right: 0;
     height: 4px;
     background: linear-gradient(90deg, #3498db, #2ecc71, #f39c12, #e74c3c);
-  }
-  
-  @media (max-width: 768px) {
-    padding: 20px;
-    border-radius: 16px;
   }
 `;
 
@@ -209,10 +194,6 @@ const JobsSection = styled.div`
   border-radius: 12px;
   padding: 24px;
   margin-top: 30px;
-  
-  @media (max-width: 768px) {
-    padding: 16px;
-  }
 `;
 
 const JobsHeader = styled.div`
@@ -289,13 +270,6 @@ const JobItem = styled.div`
     gap: 8px;
     flex-wrap: wrap;
     align-items: center;
-  }
-  
-  @media (max-width: 600px) {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-    .job-actions { width: 100%; }
   }
 `;
 
@@ -653,7 +627,8 @@ const PrintRelease = () => {
     // return () => clearTimeout(id);
 
     if (!documentData?.dataUrl && !printedViaIframe) {
-      console.warn('No embedded document dataUrl available; skipping auto-print for this job.');
+      console.warn('Document content not found, cannot auto-print.');
+      toast.error('Document content not available for printing. Please try downloading it instead.');
     }
   }, [autoPrintDone, printedViaIframe, params.jobId, printJobs, serverJob, cachedDocument]);
 
@@ -878,23 +853,17 @@ const PrintRelease = () => {
   };
 
   const handleViewDocument = async (job) => {
+    // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
-    if (String(job.id).startsWith('local_')) {
-      toast.error('This local job cannot be opened. Please submit the document again.');
-      return;
-    }
     if (!documentData?.dataUrl) {
       try {
         const fetched = await viewPrintJob(job.id, job.secureToken, authenticatedUser.id);
         if (fetched?.dataUrl) {
           documentData = fetched;
           setCachedDocument(fetched);
-        } else {
-          toast.error('Document preview is not available for this job.');
-          return;
         }
       } catch (err) {
-        toast.error('Failed to load document preview.');
+        toast.error(err.message || 'Failed to fetch document for preview');
         return;
       }
     }
@@ -995,23 +964,17 @@ const PrintRelease = () => {
   };
 
   const handlePrintDocument = async (job) => {
+    // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
-    if (String(job.id).startsWith('local_')) {
-      toast.error('This local job cannot be printed. Please submit the document again.');
-      return;
-    }
     if (!documentData?.dataUrl) {
       try {
         const fetched = await viewPrintJob(job.id, job.secureToken, authenticatedUser.id);
         if (fetched?.dataUrl) {
           documentData = fetched;
           setCachedDocument(fetched);
-        } else {
-          toast.error('Document content is not available for printing.');
-          return;
         }
       } catch (err) {
-        toast.error('Failed to prepare document for printing.');
+        toast.error(err.message || 'Failed to fetch document for printing');
         return;
       }
     }
@@ -1285,18 +1248,18 @@ const PrintRelease = () => {
                           <div className="job-actions">
                             <ActionButton 
                               className="secondary"
-                              onClick={() => handleViewDocument(job)}
-                              title="View Document"
-                              style={{ padding: '8px 12px', minWidth: 'auto' }}
+                              onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
+                              title={job.document?.dataUrl ? "View Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
                             >
                               <FaEye style={{ marginRight: '4px' }} />
                               View
                             </ActionButton>
                             <ActionButton 
                               className="secondary"
-                              onClick={() => handlePrintDocument(job)}
-                              title="Print Document"
-                              style={{ padding: '8px 12px', minWidth: 'auto' }}
+                              onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
+                              title={job.document?.dataUrl ? "Print Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
                             >
                               <FaPrint style={{ marginRight: '4px' }} />
                               Print
