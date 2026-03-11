@@ -653,8 +653,7 @@ const PrintRelease = () => {
     // return () => clearTimeout(id);
 
     if (!documentData?.dataUrl && !printedViaIframe) {
-      console.warn('Document content not found, cannot auto-print.');
-      toast.error('Document content not available for printing. Please try downloading it instead.');
+      console.warn('No embedded document dataUrl available; skipping auto-print for this job.');
     }
   }, [autoPrintDone, printedViaIframe, params.jobId, printJobs, serverJob, cachedDocument]);
 

@@ -373,19 +373,6 @@ router.get('/:id/stream', (req, res) => {
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
     
-    if (job.viewCount > 0) {
-      return res.status(403).json({ error: 'Document already viewed (one-time only)', alreadyViewed: true });
-    }
-    
-    const now = new Date().toISOString();
-    db.prepare('UPDATE jobs SET viewCount = viewCount + 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
-      .run(now, now, id);
-    if (metadata) {
-      metadata.viewCount = 1;
-      metadata.firstViewedAt = now;
-      expirationMetadata.set(id, metadata);
-    }
-    
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
       const decryptedBuffer = decryptDocumentForJob(document.content, id);
