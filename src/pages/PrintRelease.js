@@ -887,7 +887,7 @@ const PrintRelease = () => {
         toast.error('Local job content is not available to preview. Please resubmit while online.');
         return;
       }
-      const { dataUrl, mimeType, name } = documentData;
+      const { dataUrl, mimeType } = documentData;
       const isPdf = (mimeType || '').includes('pdf');
       const isImage = (mimeType || '').startsWith('image/');
       const isText = (mimeType || '').includes('text/');
@@ -1054,7 +1054,7 @@ const PrintRelease = () => {
         toast.error('Local job content is not available for printing. Please resubmit while online.');
         return;
       }
-      const { dataUrl, mimeType, name } = documentData;
+      const { dataUrl, mimeType } = documentData;
       const isPdf = (mimeType || '').includes('pdf');
       const isImage = (mimeType || '').startsWith('image/');
       const isText = (mimeType || '').includes('text/');
