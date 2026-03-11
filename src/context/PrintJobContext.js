@@ -20,6 +20,7 @@ export const PrintJobProvider = ({ children }) => {
   const [isFetching, setIsFetching] = useState(false);
   const [error, setError] = useState(null);
   const [expirationMetadata, setExpirationMetadata] = useState(new Map());
+  const [localJobFiles, setLocalJobFiles] = useState({});
 
   // Helper to sync metadata from jobs
   const syncMetadataFromJobs = useCallback((jobs) => {
@@ -294,6 +295,9 @@ export const PrintJobProvider = ({ children }) => {
         };
 
         setPrintJobs(prev => [submittedJob, ...prev]);
+        if (jobData.file instanceof File) {
+          setLocalJobFiles(prev => ({ ...prev, [id]: jobData.file }));
+        }
         
         setExpirationMetadata(prev => {
           const newMap = new Map(prev);
@@ -508,6 +512,10 @@ export const PrintJobProvider = ({ children }) => {
     }
   };
 
+  const getLocalJobFile = (jobId) => {
+    return localJobFiles[jobId] || null;
+  };
+
   const getJobsByUser = (userId) => {
     return printJobs.filter(job => job.userId === userId);
   };
@@ -599,7 +607,8 @@ export const PrintJobProvider = ({ children }) => {
     deletePrinter,
     calculateJobCost,
     validateTokenAndExpiration,
-    expirationMetadata
+    expirationMetadata,
+    getLocalJobFile
   };
 
   return (

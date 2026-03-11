@@ -398,7 +398,7 @@ const EmptyState = styled.div`
 const PrintRelease = () => {
   const { loginWithPin, mockUsers } = useAuth();
   const { user } = useUser();
-  const { printJobs, releasePrintJob, viewPrintJob, printers, validateTokenAndExpiration } = usePrintJob();
+  const { printJobs, releasePrintJob, viewPrintJob, printers, validateTokenAndExpiration, getLocalJobFile } = usePrintJob();
   const params = useParams();
   const location = useLocation();
   const [authMethod, setAuthMethod] = useState(null);
@@ -878,12 +878,36 @@ const PrintRelease = () => {
   };
 
   const handleViewDocument = async (job) => {
-    // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
-    // Local-only jobs (created when API submission failed) never exist on the server.
-    // Do not attempt to call backend /stream for these IDs.
     if (String(job.id).startsWith('local_')) {
       if (!documentData?.dataUrl) {
+        const localFile = getLocalJobFile(job.id);
+        if (localFile) {
+          const mimeType = localFile.type || documentData?.mimeType || documentData?.mimetype;
+          const url = URL.createObjectURL(localFile);
+          const isPdf = (mimeType || '').includes('pdf');
+          const isImage = (mimeType || '').startsWith('image/');
+          const isText = (mimeType || '').includes('text/');
+          const isWord = /msword|wordprocessingml/.test(mimeType || '');
+          const isExcel = /excel|spreadsheetml/.test(mimeType || '');
+          const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
+          const isOffice = isWord || isExcel || isPowerPoint;
+          if (isPdf) {
+            const win = window.open(url, '_blank');
+            if (win) {
+              win.addEventListener('load', () => {
+                setTimeout(() => URL.revokeObjectURL(url), 5000);
+              });
+            }
+            return;
+          }
+          if (isImage || isText || isOffice) {
+            window.open(url, '_blank');
+            return;
+          }
+          window.open(url, '_blank');
+          return;
+        }
         toast.error('Local job content is not available to preview. Please resubmit while online.');
         return;
       }
@@ -903,20 +927,6 @@ const PrintRelease = () => {
       window.open(dataUrl, '_blank');
       return;
     }
-    // If we know the document exists and it's large (no dataUrl but has size), stream directly
-    if (documentData && !documentData.dataUrl && documentData.size) {
-      const urlToken = new URLSearchParams(window.location.search).get('token');
-      const token = job.secureToken || urlToken;
-      if (!token) {
-        toast.error('Missing token for streaming');
-        return;
-      }
-      const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
-      setPrintedViaIframe(true);
-      toast.info('Opening via secure stream');
-      window.open(streamUrl, '_blank');
-      return;
-    }
     if (!documentData?.dataUrl) {
       try {
         const fetched = await viewPrintJob(job.id, job.secureToken, authenticatedUser.id);
@@ -924,29 +934,11 @@ const PrintRelease = () => {
           documentData = fetched;
           setCachedDocument(fetched);
         } else {
-          const urlToken = new URLSearchParams(window.location.search).get('token');
-          const token = job.secureToken || urlToken;
-          if (!token) {
-            toast.error('Missing token for streaming');
-            return;
-          }
-          const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
-          setPrintedViaIframe(true);
-          toast.info('Opening via secure stream');
-          window.open(streamUrl, '_blank');
+          toast.error('Document preview is not available for this job.');
           return;
         }
       } catch (err) {
-        // Absolute fallback: attempt stream regardless
-        const urlToken = new URLSearchParams(window.location.search).get('token');
-        const token = job.secureToken || urlToken;
-        if (!token) {
-          toast.error('Missing token for streaming');
-          return;
-        }
-        const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
-        toast.info('Opening via secure stream');
-        window.open(streamUrl, '_blank');
+        toast.error('Failed to load document preview.');
         return;
       }
     }
@@ -1047,11 +1039,43 @@ const PrintRelease = () => {
   };
 
   const handlePrintDocument = async (job) => {
-    // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
     if (String(job.id).startsWith('local_')) {
       if (!documentData?.dataUrl) {
-        toast.error('Local job content is not available for printing. Please resubmit while online.');
+        const localFile = getLocalJobFile(job.id);
+        if (!localFile) {
+          toast.error('Local job content is not available for printing. Please resubmit while online.');
+          return;
+        }
+        const mimeType = localFile.type || documentData?.mimeType || documentData?.mimetype;
+        const url = URL.createObjectURL(localFile);
+        const isPdf = (mimeType || '').includes('pdf');
+        const isImage = (mimeType || '').startsWith('image/');
+        const isText = (mimeType || '').includes('text/');
+        const isWord = /msword|wordprocessingml/.test(mimeType || '');
+        const isExcel = /excel|spreadsheetml/.test(mimeType || '');
+        const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
+        const isOffice = isWord || isExcel || isPowerPoint;
+        if (isPdf) {
+          const printWindow = window.open(url, '_blank');
+          if (printWindow) {
+            printWindow.addEventListener('load', () => {
+              setTimeout(() => printWindow.print(), 500);
+            });
+          }
+          return;
+        }
+        if (isImage || isText || isOffice) {
+          const win = window.open(url, '_blank');
+          if (win) {
+            toast.info('Use the browser or application print option to print this local document.');
+          }
+          return;
+        }
+        const win = window.open(url, '_blank');
+        if (win) {
+          toast.info('Use the browser print option to print this local document.');
+        }
         return;
       }
       const { dataUrl, mimeType } = documentData;
@@ -1086,22 +1110,6 @@ const PrintRelease = () => {
       }
       return;
     }
-    if (documentData && !documentData.dataUrl && documentData.size) {
-      const urlToken = new URLSearchParams(window.location.search).get('token');
-      const token = job.secureToken || urlToken;
-      if (!token) {
-        toast.error('Missing token for streaming');
-        return;
-      }
-      const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
-      setPrintedViaIframe(true);
-      toast.info('Opening via secure stream for printing');
-      const printWindow = window.open(streamUrl, '_blank');
-      if (!printWindow) {
-        toast.info('Document opened in a new tab for printing');
-      }
-      return;
-    }
     if (!documentData?.dataUrl) {
       try {
         const fetched = await viewPrintJob(job.id, job.secureToken, authenticatedUser.id);
@@ -1109,35 +1117,11 @@ const PrintRelease = () => {
           documentData = fetched;
           setCachedDocument(fetched);
         } else {
-          const urlToken = new URLSearchParams(window.location.search).get('token');
-          const token = job.secureToken || urlToken;
-          if (!token) {
-            toast.error('Missing token for streaming');
-            return;
-          }
-          const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
-          setPrintedViaIframe(true);
-          toast.info('Opening via secure stream for printing');
-          const printWindow = window.open(streamUrl, '_blank');
-          if (!printWindow) {
-            toast.info('Document opened in a new tab for printing');
-          }
+          toast.error('Document content is not available for printing.');
           return;
         }
       } catch (err) {
-        const urlToken = new URLSearchParams(window.location.search).get('token');
-        const token = job.secureToken || urlToken;
-        if (!token) {
-          toast.error('Missing token for streaming');
-          return;
-        }
-        const streamUrl = `/api/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`;
-        setPrintedViaIframe(true);
-        toast.info('Opening via secure stream for printing');
-        const printWindow = window.open(streamUrl, '_blank');
-        if (!printWindow) {
-          toast.info('Document opened in a new tab for printing');
-        }
+        toast.error('Failed to prepare document for printing.');
         return;
       }
     }

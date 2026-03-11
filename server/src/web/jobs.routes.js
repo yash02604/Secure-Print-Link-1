@@ -303,18 +303,14 @@ router.get('/:id', (req, res) => {
   try {
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      // Only include dataUrl for small files to avoid huge payloads
-      const dataUrlMax = +(process.env.DATA_URL_MAX_BYTES || 20 * 1024 * 1024);
       job.document = {
         mimeType: document.mimeType,
         name: document.filename,
         size: document.size
       };
-      if (!document.size || document.size <= dataUrlMax) {
-        const decryptedBuffer = decryptDocumentForJob(document.content, id);
-        const base64 = decryptedBuffer.toString('base64');
-        job.document.dataUrl = `data:${document.mimeType};base64,${base64}`;
-      }
+      const decryptedBuffer = decryptDocumentForJob(document.content, id);
+      const base64 = decryptedBuffer.toString('base64');
+      job.document.dataUrl = `data:${document.mimeType};base64,${base64}`;
       
       // Fetch analysis
       const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
@@ -481,24 +477,14 @@ router.post('/:id/view', (req, res) => {
     let documentData = null;
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      const dataUrlMax = +(process.env.DATA_URL_MAX_BYTES || 20 * 1024 * 1024);
-      if (!document.size || document.size <= dataUrlMax) {
-        const decryptedBuffer = decryptDocumentForJob(document.content, id);
-        const base64 = decryptedBuffer.toString('base64');
-        documentData = {
-          dataUrl: `data:${document.mimeType};base64,${base64}`,
-          mimeType: document.mimeType,
-          name: document.filename,
-          size: document.size
-        };
-      } else {
-        documentData = {
-          dataUrl: null,
-          mimeType: document.mimeType,
-          name: document.filename,
-          size: document.size
-        };
-      }
+      const decryptedBuffer = decryptDocumentForJob(document.content, id);
+      const base64 = decryptedBuffer.toString('base64');
+      documentData = {
+        dataUrl: `data:${document.mimeType};base64,${base64}`,
+        mimeType: document.mimeType,
+        name: document.filename,
+        size: document.size
+      };
     } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
       const fileBuffer = fs.readFileSync(metadata.filePath);
       const base64 = fileBuffer.toString('base64');
