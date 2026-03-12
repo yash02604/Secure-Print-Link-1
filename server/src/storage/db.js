@@ -52,7 +52,6 @@ export function createDb(dbPath) {
       secureToken TEXT,
       releaseLink TEXT,
       expiresAt TEXT,
-      isViewed INTEGER DEFAULT 0,
       viewCount INTEGER DEFAULT 0,  -- Track how many times document was viewed
       firstViewedAt TEXT,          -- When first viewed
       lastViewedAt TEXT,           -- When last viewed
@@ -159,17 +158,6 @@ export function createDb(dbPath) {
     if (!hasCreatedAt) db.exec(`ALTER TABLE users ADD COLUMN createdAt TEXT`);
   } catch (e) {
     // If ALTER fails (e.g., older SQLite), ignore; columns may already exist
-    try { /* noop */ } catch (_) {}
-  }
-
-  // Ensure jobs table has isViewed column for secure view/print flow
-  try {
-    const jobColumns = db.prepare(`PRAGMA table_info(jobs)`).all();
-    const hasIsViewed = jobColumns.some(c => c.name === 'isViewed');
-    if (!hasIsViewed) {
-      db.exec(`ALTER TABLE jobs ADD COLUMN isViewed INTEGER DEFAULT 0`);
-    }
-  } catch (e) {
     try { /* noop */ } catch (_) {}
   }
 

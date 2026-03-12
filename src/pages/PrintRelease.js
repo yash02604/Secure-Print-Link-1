@@ -8,6 +8,7 @@ import {
   FaQrcode, 
   FaKey, 
   FaPrint,
+  FaEye,
   FaChartBar
 } from 'react-icons/fa';
 import { useParams, useLocation } from 'react-router-dom';
@@ -851,10 +852,119 @@ const PrintRelease = () => {
     }
   };
 
- 
+  const handleViewDocument = async (job) => {
+    // Use cached document first, fallback to job document
+    let documentData = cachedDocument || job?.document;
+    if (!documentData?.dataUrl) {
+      try {
+        const fetched = await viewPrintJob(job.id, job.secureToken, authenticatedUser.id);
+        if (fetched?.dataUrl) {
+          documentData = fetched;
+          setCachedDocument(fetched);
+        }
+      } catch (err) {
+        toast.error(err.message || 'Failed to fetch document for preview');
+        return;
+      }
+    }
+
+    const { dataUrl, mimeType, name } = documentData;
+    const isPdf = (mimeType || '').includes('pdf');
+    const isImage = (mimeType || '').startsWith('image/');
+    const isText = (mimeType || '').includes('text/');
+    const isWord = /msword|wordprocessingml/.test(mimeType || '');
+    const isExcel = /excel|spreadsheetml/.test(mimeType || '');
+    const isPowerPoint = /powerpoint|presentationml/.test(mimeType || '');
+    const isOffice = isWord || isExcel || isPowerPoint;
+
+    // For PDFs and images, open in a new window for viewing/printing
+    if (isPdf || isImage) {
+      if (isPdf) {
+        // Convert to blob URL for PDFs (avoids data URL size limits)
+        const blobUrl = convertDataUrlToBlob(dataUrl);
+        const printWindow = window.open(blobUrl, '_blank');
+        
+        // Cleanup blob URL after window loads
+        if (blobUrl !== dataUrl && printWindow) {
+          printWindow.addEventListener('load', () => {
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+          });
+        }
+      } else if (isImage) {
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>${name || 'Document'}</title>
+              <style>
+                body { margin: 0; padding: 20px; text-align: center; background: #f5f5f5; }
+                img { max-width: 100%; height: auto; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+              </style>
+            </head>
+            <body>
+              <img src="${dataUrl}" alt="${name || 'Document'}" />
+              <script>window.onload = function() { window.focus(); }</script>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+      }
+    } else if (isText) {
+      // For text files, open in a new window with formatted text
+      try {
+        const base64 = dataUrl.split(',')[1] || '';
+        const textContent = atob(base64);
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>${name || 'Document'}</title>
+              <style>
+                body { margin: 0; padding: 20px; font-family: monospace; background: white; }
+                pre { white-space: pre-wrap; word-wrap: break-word; }
+              </style>
+            </head>
+            <body>
+              <pre>${textContent.replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</pre>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+      } catch (err) {
+        window.open(dataUrl, '_blank');
+      }
+    } else if (isOffice) {
+      // For Office documents, open for download/viewing
+      const officeType = isWord ? 'Word' : isExcel ? 'Excel' : 'PowerPoint';
+      toast.info(`Opening ${officeType} document. Use File > Print in your application to print.`);
+      
+      // Create a download link
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = name || 'document';
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      // For other formats, try to open directly
+      // Use blob URL for safety (handles large files)
+      const blobUrl = convertDataUrlToBlob(dataUrl);
+      const printWindow = window.open(blobUrl, '_blank');
+      
+      // Cleanup blob URL after window loads
+      if (blobUrl !== dataUrl && printWindow) {
+        printWindow.addEventListener('load', () => {
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        });
+      }
+    }
+  };
 
   const handlePrintDocument = async (job) => {
-    // Use cached document first, fallback to job document; if not present, auto-preview (one-time) then print
+    // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
     if (!documentData?.dataUrl) {
       try {
@@ -1138,9 +1248,18 @@ const PrintRelease = () => {
                           <div className="job-actions">
                             <ActionButton 
                               className="secondary"
-                              onClick={() => handlePrintDocument(job)}
-                              title="Print Document"
-                              style={{ padding: '8px 12px', minWidth: 'auto' }}
+                              onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
+                              title={job.document?.dataUrl ? "View Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                            >
+                              <FaEye style={{ marginRight: '4px' }} />
+                              View
+                            </ActionButton>
+                            <ActionButton 
+                              className="secondary"
+                              onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
+                              title={job.document?.dataUrl ? "Print Document" : "No preview available"}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
                             >
                               <FaPrint style={{ marginRight: '4px' }} />
                               Print

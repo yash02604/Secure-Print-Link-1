@@ -9,7 +9,7 @@ import crypto from 'crypto';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const uploadsDir = join(__dirname, '../../uploads');
-const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024) } });
+const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_UPLOAD_BYTES || 50 * 1024 * 1024) } });
 
 const router = Router();
 
@@ -114,13 +114,37 @@ setInterval(() => {
 router.post('/', (req, res, next) => {
   upload.single('file')(req, res, (err) => {
     if (err instanceof multer.MulterError) {
+      try {
+        console.warn('[Jobs][Upload] MulterError during file upload', {
+          code: err.code,
+          message: err.message,
+          field: err.field
+        });
+      } catch (_) {}
       if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'File size exceeds limit (max 20MB)' });
+        const maxBytes = +(process.env.MAX_UPLOAD_BYTES || 50 * 1024 * 1024);
+        const maxMB = Math.round((maxBytes / (1024 * 1024)) * 10) / 10;
+        return res.status(413).json({ error: `File size exceeds limit (max ${maxMB}MB)` });
       }
       return res.status(400).json({ error: err.message });
     } else if (err) {
+      try {
+        console.error('[Jobs][Upload] Unknown upload error', { message: err.message });
+      } catch (_) {}
       return res.status(500).json({ error: 'Upload failed' });
     }
+    try {
+      if (req.file) {
+        console.log('[Jobs][Upload] Incoming file accepted by Multer', {
+          originalname: req.file.originalname,
+          mimetype: req.file.mimetype,
+          size: req.file.size,
+          maxBytes: +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024)
+        });
+      } else {
+        console.log('[Jobs][Upload] No file present on request (metadata-only submission)');
+      }
+    } catch (_) {}
     next();
   });
 }, (req, res) => {
@@ -195,15 +219,39 @@ router.post('/', (req, res, next) => {
     if (req.file) {
       const documentId = nanoid();
       const fileContent = fs.readFileSync(req.file.path);
+      try {
+        console.log('[Jobs][Encrypt] Read uploaded file from disk', {
+          path: req.file.path,
+          originalname: req.file.originalname,
+          mimetype: req.file.mimetype,
+          size: fileContent.length
+        });
+      } catch (_) {}
 
       // Encrypt the document content using per-job key
       const encryptedContent = encryptDocumentForJob(fileContent, id);
+      try {
+        console.log('[Jobs][Encrypt] Encrypted document buffer prepared', {
+          encryptedLength: encryptedContent.length
+        });
+      } catch (_) {}
       
       db.prepare(`INSERT INTO documents (
         id, jobId, content, mimeType, filename, size, createdAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
         documentId, id, encryptedContent, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString()
       );
+      try {
+        const chk = db.prepare('SELECT length(content) as contentLength, size FROM documents WHERE id = ?').get(documentId);
+        console.log('[Jobs][DB] Document row written', {
+          documentId,
+          declaredSize: req.file.size,
+          storedSizeField: chk?.size,
+          blobLength: chk?.contentLength
+        });
+      } catch (verifyErr) {
+        console.warn('[Jobs][DB] Failed to verify stored document row', { message: verifyErr?.message });
+      }
 
       // Mock Document Analysis (estimated from original file size only, no plaintext stored)
       const analysisId = nanoid();
@@ -224,6 +272,7 @@ router.post('/', (req, res, next) => {
       try {
         if (fs.existsSync(req.file.path)) {
           fs.unlinkSync(req.file.path);
+          console.log('[Jobs][Cleanup] Deleted temporary upload file', { path: req.file.path });
         }
       } catch (err) {
         console.error('Error deleting temporary upload file:', err);
@@ -236,7 +285,6 @@ router.post('/', (req, res, next) => {
         id, userId, documentName, pages, copies, color, duplex, stapling, priority, notes, 
         status: 'pending', cost, submittedAt: new Date().toISOString(), 
         secureToken, releaseLink, expiresAt: new Date(expiresAt).toISOString(), expirationDuration,
-        isViewed: 0,
         file: req.file ? { filename: req.file.filename, originalname: req.file.originalname, mimetype: req.file.mimetype, size: req.file.size } : null 
       }
     });
@@ -286,29 +334,28 @@ router.get('/:id', (req, res) => {
   if (!job) return res.status(404).json({ error: 'Job not found' });
   if (token && token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
 
+  // Check if job has been viewed already (single-view enforcement)
+  if (job.viewCount > 0) {
+    return res.status(403).json({ 
+      error: 'Document already viewed (one-time only)',
+      alreadyViewed: true,
+      viewCount: job.viewCount
+    });
+  }
+
   // Fetch document metadata and analysis from DB
   try {
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      const viewed = !!job.isViewed || (job.viewCount && job.viewCount > 0);
-      if (!viewed) {
-        // Decrypt content in memory for preview (document is stored encrypted at rest)
-        const decryptedBuffer = decryptDocumentForJob(document.content, id);
-        const base64 = decryptedBuffer.toString('base64');
-        job.document = {
-          dataUrl: `data:${document.mimeType};base64,${base64}`,
-          mimeType: document.mimeType,
-          name: document.filename,
-          size: document.size
-        };
-      } else {
-        job.document = {
-          dataUrl: null,
-          mimeType: document.mimeType,
-          name: document.filename,
-          size: document.size
-        };
-      }
+      // Decrypt content in memory for preview (document is stored encrypted at rest)
+      const decryptedBuffer = decryptDocumentForJob(document.content, id);
+      const base64 = decryptedBuffer.toString('base64');
+      job.document = {
+        dataUrl: `data:${document.mimeType};base64,${base64}`,
+        mimeType: document.mimeType,
+        name: document.filename,
+        size: document.size
+      };
       
       // Fetch analysis
       const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
@@ -379,7 +426,7 @@ router.post('/:id/view', (req, res) => {
     if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
     
     // SINGLE-USE ENFORCEMENT: Check if already viewed
-    if ((job.viewCount && job.viewCount > 0) || job.isViewed) {
+    if (job.viewCount > 0) {
       return res.status(403).json({ 
         error: 'Document already viewed (one-time only)',
         alreadyViewed: true,
@@ -391,8 +438,8 @@ router.post('/:id/view', (req, res) => {
     const now = new Date().toISOString();
     const viewId = nanoid();
     
-    // Update job view count and timestamps, and set isViewed
-    db.prepare('UPDATE jobs SET viewCount = viewCount + 1, isViewed = 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
+    // Update job view count and timestamps
+    db.prepare('UPDATE jobs SET viewCount = viewCount + 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
       .run(now, now, id);
     
     // Log the view for audit trail
