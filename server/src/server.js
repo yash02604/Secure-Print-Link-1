@@ -38,7 +38,7 @@ app.use(morgan('dev'));
 const db = createDb(join(__dirname, '../data/secureprint.db'));
 app.set('db', db);
 
-const MAX_UPLOAD_BYTES = +(process.env.MAX_UPLOAD_BYTES || 50 * 1024 * 1024);
+const MAX_UPLOAD_BYTES = +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024);
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_BYTES }

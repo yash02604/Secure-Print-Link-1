@@ -9,7 +9,7 @@ import crypto from 'crypto';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const uploadsDir = join(__dirname, '../../uploads');
-const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_UPLOAD_BYTES || 50 * 1024 * 1024) } });
+const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024) } });
 
 const router = Router();
 
@@ -114,37 +114,13 @@ setInterval(() => {
 router.post('/', (req, res, next) => {
   upload.single('file')(req, res, (err) => {
     if (err instanceof multer.MulterError) {
-      try {
-        console.warn('[Jobs][Upload] MulterError during file upload', {
-          code: err.code,
-          message: err.message,
-          field: err.field
-        });
-      } catch (_) {}
       if (err.code === 'LIMIT_FILE_SIZE') {
-        const maxBytes = +(process.env.MAX_UPLOAD_BYTES || 50 * 1024 * 1024);
-        const maxMB = Math.round((maxBytes / (1024 * 1024)) * 10) / 10;
-        return res.status(413).json({ error: `File size exceeds limit (max ${maxMB}MB)` });
+        return res.status(413).json({ error: 'File size exceeds limit (max 20MB)' });
       }
       return res.status(400).json({ error: err.message });
     } else if (err) {
-      try {
-        console.error('[Jobs][Upload] Unknown upload error', { message: err.message });
-      } catch (_) {}
       return res.status(500).json({ error: 'Upload failed' });
     }
-    try {
-      if (req.file) {
-        console.log('[Jobs][Upload] Incoming file accepted by Multer', {
-          originalname: req.file.originalname,
-          mimetype: req.file.mimetype,
-          size: req.file.size,
-          maxBytes: +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024)
-        });
-      } else {
-        console.log('[Jobs][Upload] No file present on request (metadata-only submission)');
-      }
-    } catch (_) {}
     next();
   });
 }, (req, res) => {
@@ -219,39 +195,15 @@ router.post('/', (req, res, next) => {
     if (req.file) {
       const documentId = nanoid();
       const fileContent = fs.readFileSync(req.file.path);
-      try {
-        console.log('[Jobs][Encrypt] Read uploaded file from disk', {
-          path: req.file.path,
-          originalname: req.file.originalname,
-          mimetype: req.file.mimetype,
-          size: fileContent.length
-        });
-      } catch (_) {}
 
       // Encrypt the document content using per-job key
       const encryptedContent = encryptDocumentForJob(fileContent, id);
-      try {
-        console.log('[Jobs][Encrypt] Encrypted document buffer prepared', {
-          encryptedLength: encryptedContent.length
-        });
-      } catch (_) {}
       
       db.prepare(`INSERT INTO documents (
         id, jobId, content, mimeType, filename, size, createdAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
         documentId, id, encryptedContent, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString()
       );
-      try {
-        const chk = db.prepare('SELECT length(content) as contentLength, size FROM documents WHERE id = ?').get(documentId);
-        console.log('[Jobs][DB] Document row written', {
-          documentId,
-          declaredSize: req.file.size,
-          storedSizeField: chk?.size,
-          blobLength: chk?.contentLength
-        });
-      } catch (verifyErr) {
-        console.warn('[Jobs][DB] Failed to verify stored document row', { message: verifyErr?.message });
-      }
 
       // Mock Document Analysis (estimated from original file size only, no plaintext stored)
       const analysisId = nanoid();
@@ -272,7 +224,6 @@ router.post('/', (req, res, next) => {
       try {
         if (fs.existsSync(req.file.path)) {
           fs.unlinkSync(req.file.path);
-          console.log('[Jobs][Cleanup] Deleted temporary upload file', { path: req.file.path });
         }
       } catch (err) {
         console.error('Error deleting temporary upload file:', err);
