@@ -865,6 +865,9 @@ const PrintRelease = () => {
         if (fetched?.dataUrl) {
           documentData = fetched;
           setCachedDocument(fetched);
+          if (serverJob && serverJob.id === job.id) {
+            setServerJob({ ...serverJob, isViewed: true, document: fetched });
+          }
         }
       } catch (err) {
         toast.error(err.message || 'Failed to fetch document for preview');
