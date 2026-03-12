@@ -238,82 +238,14 @@ export const PrintJobProvider = ({ children }) => {
         toast.success('Your document was encrypted and submitted securely.');
       }
     } catch (error) {
-      console.warn('API submission failed, falling back to local storage:', error.message);
+      console.error('API submission failed:', error);
+      setError(error.response?.data?.error || 'Failed to submit print job to server.');
+      toast.error('Failed to submit print job. Please try again while online.');
+      setIsSubmitting(false);
+      throw error;
     }
 
-    // LOCAL FALLBACK if API failed
-    if (!apiSuccess) {
-      try {
-        const id = 'local_' + Math.random().toString(36).substr(2, 9);
-        const secureToken = Math.random().toString(36).substr(2, 32);
-        const expirationDuration = parseInt(jobData.expirationDuration || 15);
-        const expiresAt = new Date(Date.now() + expirationDuration * 60000).toISOString();
-        const submittedAt = new Date().toISOString();
-        const origin = window.location.origin;
-        const releaseLink = `${origin}/release/${id}?token=${secureToken}`;
-
-        let docData = null;
-        if (jobData.file instanceof File) {
-          docData = {
-            filename: jobData.file.name,
-            originalname: jobData.file.name,
-            mimetype: jobData.file.type,
-            size: jobData.file.size
-          };
-
-          // Store as Data URL if file is small enough (< 2MB)
-          if (jobData.file.size < 2 * 1024 * 1024) {
-            const reader = new FileReader();
-            const dataUrl = await new Promise((resolve) => {
-              reader.onload = (e) => resolve(e.target.result);
-              reader.readAsDataURL(jobData.file);
-            });
-            docData.dataUrl = dataUrl;
-          }
-        }
-
-        submittedJob = {
-          id,
-          userId: jobData.userId,
-          userName: jobData.userName,
-          documentName: jobData.documentName,
-          pages: jobData.pages,
-          copies: jobData.copies,
-          color: jobData.color,
-          duplex: jobData.duplex,
-          stapling: jobData.stapling,
-          priority: jobData.priority,
-          notes: jobData.notes,
-          status: 'pending',
-          cost: calculateJobCost(jobData),
-          submittedAt,
-          secureToken,
-          releaseLink,
-          expiresAt,
-          viewCount: 0,
-          document: docData
-        };
-
-        setPrintJobs(prev => [submittedJob, ...prev]);
-        
-        setExpirationMetadata(prev => {
-          const newMap = new Map(prev);
-          newMap.set(id, {
-            expiresAt: new Date(expiresAt).getTime(),
-            createdAt: Date.now(),
-            token: secureToken,
-            viewCount: 0
-          });
-          return newMap;
-        });
-
-        toast.success('Print job was encrypted and submitted securely.');
-      } catch (err) {
-        console.error('Local submission failed:', err);
-        setError('Failed to submit print job.');
-        throw err;
-      }
-    }
+    // No local fallback – only server-stored jobs are created
 
     setIsSubmitting(false);
     return submittedJob;
