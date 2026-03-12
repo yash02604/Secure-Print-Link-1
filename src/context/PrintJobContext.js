@@ -176,7 +176,6 @@ export const PrintJobProvider = ({ children }) => {
     setIsSubmitting(true);
     setError(null);
     
-    let apiSuccess = false;
     let submittedJob = null;
 
     try {
@@ -202,7 +201,6 @@ export const PrintJobProvider = ({ children }) => {
       });
 
       if (response.data.success && response.data.job) {
-        apiSuccess = true;
         const serverJob = response.data.job;
         
         submittedJob = {
