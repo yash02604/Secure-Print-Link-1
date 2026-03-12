@@ -662,7 +662,7 @@ const PrintJobSubmission = () => {
                 </div>
                 <div className="upload-hint">
                   or click to select a file<br/>
-                  <strong>Supported formats:</strong> PDF, (Word, Excel, PowerPoint can be securely downloaded), Images and any other Document.
+                  <strong>Supported formats:</strong> PDF, (Word, Excel, PowerPoint can be securely downloaded), Images and other Document.
                   The Upload limit is 2MB.
                 </div>
                 {validationErrors.file && (
