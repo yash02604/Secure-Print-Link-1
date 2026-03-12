@@ -8,7 +8,6 @@ import {
   FaQrcode, 
   FaKey, 
   FaPrint,
-  FaEye,
   FaChartBar
 } from 'react-icons/fa';
 import { useParams, useLocation } from 'react-router-dom';
@@ -971,11 +970,7 @@ const PrintRelease = () => {
   };
 
   const handlePrintDocument = async (job) => {
-    if (!job.isViewed) {
-      toast.info('Please preview the document before printing.');
-      return;
-    }
-    // Use cached document first, fallback to job document
+    // Use cached document first, fallback to job document; if not present, auto-preview (one-time) then print
     let documentData = cachedDocument || job?.document;
     if (!documentData?.dataUrl) {
       try {
@@ -1259,20 +1254,9 @@ const PrintRelease = () => {
                           <div className="job-actions">
                             <ActionButton 
                               className="secondary"
-                              onClick={() => !job.isViewed ? handleViewDocument(job) : toast.info('Document has already been previewed.')}
-                              title={!job.isViewed ? "View Document" : "Already previewed"}
-                              disabled={!!job.isViewed}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: !job.isViewed ? 1 : 0.6 }}
-                            >
-                              <FaEye style={{ marginRight: '4px' }} />
-                              View
-                            </ActionButton>
-                            <ActionButton 
-                              className="secondary"
-                              onClick={() => job.isViewed ? handlePrintDocument(job) : toast.info('Please preview the document before printing.')}
-                              title={job.isViewed ? "Print Document" : "Preview required"}
-                              disabled={!job.isViewed}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.isViewed ? 1 : 0.6 }}
+                              onClick={() => handlePrintDocument(job)}
+                              title="Print Document"
+                              style={{ padding: '8px 12px', minWidth: 'auto' }}
                             >
                               <FaPrint style={{ marginRight: '4px' }} />
                               Print
