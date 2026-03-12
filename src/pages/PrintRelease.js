@@ -853,6 +853,10 @@ const PrintRelease = () => {
   };
 
   const handleViewDocument = async (job) => {
+    if (job.isViewed) {
+      toast.info('Document has already been previewed.');
+      return;
+    }
     // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
     if (!documentData?.dataUrl) {
@@ -964,6 +968,10 @@ const PrintRelease = () => {
   };
 
   const handlePrintDocument = async (job) => {
+    if (!job.isViewed) {
+      toast.info('Please preview the document before printing.');
+      return;
+    }
     // Use cached document first, fallback to job document
     let documentData = cachedDocument || job?.document;
     if (!documentData?.dataUrl) {
@@ -1248,18 +1256,20 @@ const PrintRelease = () => {
                           <div className="job-actions">
                             <ActionButton 
                               className="secondary"
-                              onClick={() => job.document?.dataUrl ? handleViewDocument(job) : toast.info('Document preview not available. Release the job to print.')}
-                              title={job.document?.dataUrl ? "View Document" : "No preview available"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                              onClick={() => !job.isViewed ? handleViewDocument(job) : toast.info('Document has already been previewed.')}
+                              title={!job.isViewed ? "View Document" : "Already previewed"}
+                              disabled={!!job.isViewed}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: !job.isViewed ? 1 : 0.6 }}
                             >
                               <FaEye style={{ marginRight: '4px' }} />
                               View
                             </ActionButton>
                             <ActionButton 
                               className="secondary"
-                              onClick={() => job.document?.dataUrl ? handlePrintDocument(job) : toast.info('Document not available. Release the job first.')}
-                              title={job.document?.dataUrl ? "Print Document" : "No preview available"}
-                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.document?.dataUrl ? 1 : 0.6 }}
+                              onClick={() => job.isViewed ? handlePrintDocument(job) : toast.info('Please preview the document before printing.')}
+                              title={job.isViewed ? "Print Document" : "Preview required"}
+                              disabled={!job.isViewed}
+                              style={{ padding: '8px 12px', minWidth: 'auto', opacity: job.isViewed ? 1 : 0.6 }}
                             >
                               <FaPrint style={{ marginRight: '4px' }} />
                               Print

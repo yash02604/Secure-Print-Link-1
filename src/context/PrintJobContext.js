@@ -207,6 +207,7 @@ export const PrintJobProvider = ({ children }) => {
         
         submittedJob = {
           ...serverJob,
+          isViewed: serverJob.isViewed ?? 0,
           document: serverJob.file ? {
             filename: serverJob.file.filename,
             originalname: serverJob.file.originalname,
@@ -363,6 +364,7 @@ export const PrintJobProvider = ({ children }) => {
           job.id === jobId 
             ? { 
                 ...job, 
+                isViewed: true,
                 viewCount: response.data.viewCount,
                 firstViewedAt: response.data.firstViewedAt,
                 document: response.data.document

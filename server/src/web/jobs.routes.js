@@ -236,6 +236,7 @@ router.post('/', (req, res, next) => {
         id, userId, documentName, pages, copies, color, duplex, stapling, priority, notes, 
         status: 'pending', cost, submittedAt: new Date().toISOString(), 
         secureToken, releaseLink, expiresAt: new Date(expiresAt).toISOString(), expirationDuration,
+        isViewed: 0,
         file: req.file ? { filename: req.file.filename, originalname: req.file.originalname, mimetype: req.file.mimetype, size: req.file.size } : null 
       }
     });
@@ -285,28 +286,29 @@ router.get('/:id', (req, res) => {
   if (!job) return res.status(404).json({ error: 'Job not found' });
   if (token && token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
 
-  // Check if job has been viewed already (single-view enforcement)
-  if (job.viewCount > 0) {
-    return res.status(403).json({ 
-      error: 'Document already viewed (one-time only)',
-      alreadyViewed: true,
-      viewCount: job.viewCount
-    });
-  }
-
   // Fetch document metadata and analysis from DB
   try {
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
     if (document) {
-      // Decrypt content in memory for preview (document is stored encrypted at rest)
-      const decryptedBuffer = decryptDocumentForJob(document.content, id);
-      const base64 = decryptedBuffer.toString('base64');
-      job.document = {
-        dataUrl: `data:${document.mimeType};base64,${base64}`,
-        mimeType: document.mimeType,
-        name: document.filename,
-        size: document.size
-      };
+      const viewed = !!job.isViewed || (job.viewCount && job.viewCount > 0);
+      if (!viewed) {
+        // Decrypt content in memory for preview (document is stored encrypted at rest)
+        const decryptedBuffer = decryptDocumentForJob(document.content, id);
+        const base64 = decryptedBuffer.toString('base64');
+        job.document = {
+          dataUrl: `data:${document.mimeType};base64,${base64}`,
+          mimeType: document.mimeType,
+          name: document.filename,
+          size: document.size
+        };
+      } else {
+        job.document = {
+          dataUrl: null,
+          mimeType: document.mimeType,
+          name: document.filename,
+          size: document.size
+        };
+      }
       
       // Fetch analysis
       const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
@@ -377,7 +379,7 @@ router.post('/:id/view', (req, res) => {
     if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
     
     // SINGLE-USE ENFORCEMENT: Check if already viewed
-    if (job.viewCount > 0) {
+    if ((job.viewCount && job.viewCount > 0) || job.isViewed) {
       return res.status(403).json({ 
         error: 'Document already viewed (one-time only)',
         alreadyViewed: true,
@@ -389,8 +391,8 @@ router.post('/:id/view', (req, res) => {
     const now = new Date().toISOString();
     const viewId = nanoid();
     
-    // Update job view count and timestamps
-    db.prepare('UPDATE jobs SET viewCount = viewCount + 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
+    // Update job view count and timestamps, and set isViewed
+    db.prepare('UPDATE jobs SET viewCount = viewCount + 1, isViewed = 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
       .run(now, now, id);
     
     // Log the view for audit trail
