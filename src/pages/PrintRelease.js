@@ -396,9 +396,9 @@ const EmptyState = styled.div`
 `;
 
 const PrintRelease = () => {
-  const { loginWithPin, mockUsers } = useAuth();
+  const { loginWithPin } = useAuth();
   const { user } = useUser();
-  const { printJobs, releasePrintJob, viewPrintJob, printers, validateTokenAndExpiration } = usePrintJob();
+  const { releasePrintJob, viewPrintJob, printers } = usePrintJob();
   const params = useParams();
   const location = useLocation();
   const [authMethod, setAuthMethod] = useState(null);
@@ -460,48 +460,25 @@ const PrintRelease = () => {
           } else {
             toast.error(errorMsg || 'Invalid or expired print link');
           }
-          return;
-        }
-        
-        // API not available - use client-side validation (fallback)
-        if (token && validateTokenAndExpiration) {
-          const validation = validateTokenAndExpiration(jobId, token);
-          if (!validation.valid) {
-            const errorMsg = validation.error || 'Invalid or expired print link';
-            if (errorMsg.includes('expired')) {
-              toast.info(errorMsg, { autoClose: 5000 });
-            } else {
-              toast.error(errorMsg);
-            }
-            // Do not return here; attempt local printJobs fallback below
-          }
-        }
-        
-        const job = printJobs.find(j => j.id === jobId && j.secureToken === token);
-        if (job) {
-          if (job.expiresAt && new Date(job.expiresAt) < new Date()) {
-            toast.info('This print link has expired', { autoClose: 5000 });
-            return;
-          }
-          setLinkTargetJobId(jobId);
-          // Cache document for multi-use
-          if (job.document) {
-            setCachedDocument(job.document);
-          }
+        } else if (apiError.response?.status === 410) {
+          toast.info('This print link has expired', { autoClose: 5000 });
+        } else if (apiError.response?.status === 404) {
+          toast.error('Print job not found');
+        } else {
+          toast.error('Failed to connect to server');
         }
       }
     };
     
     validateFromServer();
-  }, [params.jobId, location.search, printJobs, validateTokenAndExpiration]);
+  }, [params.jobId, location.search]);
 
   // Auto-open print dialog for the actual document once auto-release is done
   useEffect(() => {
     if (!autoPrintDone) return;
 
-    const jobId = params.jobId;
     // Use cached document first, fallback to job document
-    const documentData = cachedDocument || serverJob?.document || printJobs.find(j => j.id === jobId)?.document;
+    const documentData = cachedDocument || serverJob?.document;
 
     // If we have a stored document, load and print it via an iframe
     if (documentData?.dataUrl && !printedViaIframe) {
@@ -656,7 +633,7 @@ const PrintRelease = () => {
       console.warn('Document content not found, cannot auto-print.');
       toast.error('Document content not available for printing. Please try downloading it instead.');
     }
-  }, [autoPrintDone, printedViaIframe, params.jobId, printJobs, serverJob, cachedDocument]);
+  }, [autoPrintDone, printedViaIframe, params.jobId, serverJob, cachedDocument]);
 
   // Auto-authenticate and release if valid token and jobId are present
   // SECURITY: Multi-use design - can be called multiple times (page refresh)
@@ -671,9 +648,9 @@ const PrintRelease = () => {
     // Skip if: no job/token, already releasing, or already released in this session
     if (!jobId || !token || releasingRef.current || releasedInSession.current) return;
     
-    // Use cached document or fetch from server/printJobs
+    // Use cached document or fetch from server
     const documentData = cachedDocument || serverJob?.document;
-    const job = serverJob || printJobs.find(j => j.id === jobId && j.secureToken === token);
+    const job = serverJob;
     if (!job) return;
     
     // Resolve user context
@@ -724,14 +701,12 @@ const PrintRelease = () => {
         releasingRef.current = false;
       })
       .finally(() => setLoading(false));
-  }, [params.jobId, location.search, printJobs, printers, mockUsers, releasePrintJob, serverJob, cachedDocument, user]);
+  }, [params.jobId, location.search, printers, releasePrintJob, serverJob, cachedDocument, user]);
 
   const userJobs = authenticatedUser 
     ? [
         // Include serverJob if it matches user (ignore status for multi-use)
-        ...(serverJob && serverJob.userId === authenticatedUser.id ? [serverJob] : []),
-        // Include printJobs that match user (ignore status for multi-use)
-        ...printJobs.filter(job => job.userId === authenticatedUser.id && job.id !== serverJob?.id)
+        ...(serverJob && serverJob.userId === authenticatedUser.id ? [serverJob] : [])
       ]
     : [];
 
@@ -797,7 +772,7 @@ const PrintRelease = () => {
 
     setLoading(true);
     try {
-      const token = new URLSearchParams(location.search).get('token') || (printJobs.find(j => j.id === jobId)?.secureToken);
+      const token = new URLSearchParams(location.search).get('token') || serverJob?.secureToken;
       if (!token) {
         throw new Error('Missing secure token for this job');
       }
@@ -805,7 +780,7 @@ const PrintRelease = () => {
       toast.success('Print job released successfully! You can release it again until the link expires.');
       
       // Cache document for future use
-      const job = serverJob || printJobs.find(j => j.id === jobId);
+      const job = serverJob;
       if (job?.document && !cachedDocument) {
         setCachedDocument(job.document);
       }
