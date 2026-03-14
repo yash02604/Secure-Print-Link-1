@@ -405,6 +405,15 @@ const PrintRelease = () => {
               status: 'pending',
               cost: 0
             });
+            setLinkTargetJobId(resp.data.jobId);
+            if (!authenticatedUser) {
+              setAuthenticatedUser({
+                id: 'shared',
+                name: 'Shared Viewer',
+                role: 'Guest',
+                department: 'External'
+              });
+            }
           } else {
             toast.error(resp.data?.error || 'Unable to load shared document');
           }
@@ -1290,6 +1299,36 @@ const PrintRelease = () => {
                             >
                               <FaPrint style={{ marginRight: '4px' }} />
                               Print
+                            </ActionButton>
+                            <ActionButton 
+                              className="secondary"
+                              onClick={async () => {
+                                try {
+                                  const token = new URLSearchParams(location.search).get('token') || job.secureToken;
+                                  if (!token) {
+                                    toast.error('Missing secure token to create share link');
+                                    return;
+                                  }
+                                  const { default: api } = await import('../api/client');
+                                  const resp = await api.post(`/api/jobs/${job.id}/share`, {
+                                    token,
+                                    expiresInMinutes: 60,
+                                    maxViews: 3
+                                  });
+                                  if (resp.data?.success && resp.data?.shareLink) {
+                                    await navigator.clipboard.writeText(resp.data.shareLink);
+                                    toast.info('Share link copied to clipboard');
+                                  } else {
+                                    toast.error(resp.data?.error || 'Failed to create share link');
+                                  }
+                                } catch (err) {
+                                  toast.error(err.response?.data?.error || err.message || 'Failed to create share link');
+                                }
+                              }}
+                              title="Create shareable link"
+                              style={{ padding: '8px 12px', minWidth: 'auto' }}
+                            >
+                              Share
                             </ActionButton>
                             <ActionButton 
                               className="primary"
