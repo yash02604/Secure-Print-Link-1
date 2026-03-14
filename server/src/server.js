@@ -35,7 +35,20 @@ app.use(express.json({ limit: '10mb' }));
 app.use(morgan('dev'));
 
 // initialize DB
-const db = createDb(join(__dirname, '../data/secureprint.db'));
+const isVercel = process.env.VERCEL === '1';
+const dbPath = isVercel 
+  ? join('/tmp', 'secureprint.db') 
+  : join(__dirname, '../data/secureprint.db');
+
+// If on Vercel, we need to ensure the DB file exists in /tmp
+if (isVercel && !fs.existsSync(dbPath)) {
+  const initialDbPath = join(__dirname, '../data/secureprint.db');
+  if (fs.existsSync(initialDbPath)) {
+    fs.copyFileSync(initialDbPath, dbPath);
+  }
+}
+
+const db = createDb(dbPath);
 app.set('db', db);
 
 const MAX_UPLOAD_BYTES = +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024);
@@ -315,8 +328,12 @@ io.on('connection', (socket) => {
   });
 });
 
-httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`SecurePrint backend running on http://0.0.0.0:${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Socket.IO enabled for real-time chat`);
-});
+if (!isVercel) {
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`SecurePrint backend running on http://0.0.0.0:${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`Socket.IO enabled for real-time chat`);
+  });
+}
+
+export default app;

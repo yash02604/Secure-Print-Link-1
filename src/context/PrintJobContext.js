@@ -179,9 +179,17 @@ export const PrintJobProvider = ({ children }) => {
         toast.success('Your document was encrypted and submitted securely.');
       }
     } catch (error) {
-      console.error('API submission failed:', error.message);
-      setError('Failed to submit print job: ' + (error.response?.data?.error || error.message));
-      toast.error('Submission failed. Please try again.');
+      console.error('API submission failed:', error.message, error.response?.status, error.config?.url);
+      const errorDetail = error.response?.data?.error || error.message;
+      const status = error.response?.status;
+      
+      let userFriendlyMessage = `Failed to submit print job: ${errorDetail}`;
+      if (status === 405) {
+        userFriendlyMessage = 'Submission failed (405): The API endpoint is not accepting the request. This usually happens if the backend server is not running or the API URL is incorrect.';
+      }
+
+      setError(userFriendlyMessage);
+      toast.error('Submission failed. Please check if the backend server is running.');
     }
 
     setIsSubmitting(false);
