@@ -387,6 +387,33 @@ const PrintRelease = () => {
   const [serverJob, setServerJob] = useState(null);
   
   useEffect(() => {
+    const search = new URLSearchParams(location.search);
+    const shareToken = search.get('share');
+    if (shareToken) {
+      (async () => {
+        try {
+          const { default: api } = await import('../api/client');
+          const resp = await api.get(`/api/jobs/share/${shareToken}`);
+          if (resp.data?.success && resp.data?.document) {
+            setCachedDocument(resp.data.document);
+            setServerJob({
+              id: resp.data.jobId,
+              userId: 'shared',
+              documentName: resp.data.document.name || 'Shared Document',
+              document: resp.data.document,
+              isViewed: false,
+              status: 'pending',
+              cost: 0
+            });
+          } else {
+            toast.error(resp.data?.error || 'Unable to load shared document');
+          }
+        } catch (err) {
+          toast.error(err.response?.data?.error || err.message || 'Failed to load shared document');
+        }
+      })();
+      return;
+    }
     if (user && !authenticatedUser) {
       setAuthenticatedUser({
         id: user.id,
@@ -395,7 +422,7 @@ const PrintRelease = () => {
         department: 'General'
       });
     }
-  }, [user, authenticatedUser]);
+  }, [user, authenticatedUser, location.search]);
   
   // SECURITY: Multi-use support - track releases per session, NOT globally
   // - releasingRef prevents duplicate calls during same render cycle (React StrictMode)

@@ -100,6 +100,17 @@ export function createDb(dbPath) {
       FOREIGN KEY(jobId) REFERENCES jobs(id) ON DELETE CASCADE
     );
     
+    -- Share links for cross-browser viewing
+    CREATE TABLE IF NOT EXISTS share_links (
+      id TEXT PRIMARY KEY,
+      jobId TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      viewsRemaining INTEGER DEFAULT 3,
+      expiresAt TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY(jobId) REFERENCES jobs(id) ON DELETE CASCADE
+    );
+    
     -- Chat system tables
     CREATE TABLE IF NOT EXISTS conversations (
       id TEXT PRIMARY KEY,
@@ -159,6 +170,27 @@ export function createDb(dbPath) {
   } catch (e) {
     // If ALTER fails (e.g., older SQLite), ignore; columns may already exist
     try { /* noop */ } catch (_) {}
+  }
+
+  // Ensure share_links table exists (idempotent)
+  try {
+    db.prepare('SELECT 1 FROM share_links LIMIT 1').get();
+  } catch (e) {
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS share_links (
+          id TEXT PRIMARY KEY,
+          jobId TEXT NOT NULL,
+          token TEXT NOT NULL UNIQUE,
+          viewsRemaining INTEGER DEFAULT 3,
+          expiresAt TEXT NOT NULL,
+          createdAt TEXT NOT NULL,
+          FOREIGN KEY(jobId) REFERENCES jobs(id) ON DELETE CASCADE
+        );
+      `);
+    } catch (e2) {
+      try { /* noop */ } catch (_) {}
+    }
   }
 
   return db;
