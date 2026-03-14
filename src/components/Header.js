@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import { useAuth } from '../context/AuthContext';
+import { useUser, useAuth as useClerkAuth } from '@clerk/clerk-react';
 import { 
   FaBars, 
   FaUser, 
@@ -242,13 +243,15 @@ const DropdownItem = styled.button`
 `;
 
 const Header = ({ onMenuToggle }) => {
-  const { currentUser, logout } = useAuth();
+  const { currentUser } = useAuth();
+  const { user } = useUser();
+  const { signOut } = useClerkAuth();
   const navigate = useNavigate();
   const [showDropdown, setShowDropdown] = useState(false);
   const [notifications] = useState(3); // Mock notification count
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await signOut();
     navigate('/login');
     setShowDropdown(false);
   };
@@ -301,12 +304,12 @@ const Header = ({ onMenuToggle }) => {
 
         <UserSection>
           <UserInfo>
-            <div className="user-name">{currentUser?.name}</div>
+            <div className="user-name">{user?.fullName || user?.username || currentUser?.name}</div>
             <div className="user-role">{currentUser?.role}</div>
           </UserInfo>
           
           <UserAvatar onClick={() => setShowDropdown(!showDropdown)}>
-            {getInitials(currentUser?.name || 'U')}
+            {getInitials((user?.fullName || user?.username || currentUser?.name || 'U'))}
           </UserAvatar>
 
           {showDropdown && (

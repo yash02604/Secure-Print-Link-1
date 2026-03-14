@@ -17,18 +17,19 @@ import Chat from './pages/Chat';
 import Layout from './components/Layout';
 
 // Context
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { AuthProvider } from './context/AuthContext';
 import { PrintJobProvider } from './context/PrintJobContext';
 import { ChatProvider } from './context/ChatContext';
+import { useAuth as useClerkAuth } from '@clerk/clerk-react';
 
 const RequireAuth = ({ children }) => {
-  const { isAuthenticated } = useAuth();
-  return isAuthenticated ? children : <Navigate to="/login" replace />;
+  const { isSignedIn } = useClerkAuth();
+  return isSignedIn ? children : <Navigate to="/login" replace />;
 };
 
 const RedirectIfAuth = ({ children }) => {
-  const { isAuthenticated } = useAuth();
-  return isAuthenticated ? <Navigate to="/dashboard" replace /> : children;
+  const { isSignedIn } = useClerkAuth();
+  return isSignedIn ? <Navigate to="/dashboard" replace /> : children;
 };
 
 class ErrorBoundary extends Component {

@@ -142,5 +142,24 @@ export function createDb(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_messages_readStatus ON messages(readStatus);
   `);
 
+  // Ensure users table has password columns for local auth
+  try {
+    const columns = db.prepare(`PRAGMA table_info(users)`).all();
+    const hasPasswordHash = columns.some(c => c.name === 'passwordHash');
+    const hasPasswordSalt = columns.some(c => c.name === 'passwordSalt');
+    const hasProvider = columns.some(c => c.name === 'provider');
+    const hasProviderId = columns.some(c => c.name === 'providerId');
+    const hasCreatedAt = columns.some(c => c.name === 'createdAt');
+
+    if (!hasPasswordHash) db.exec(`ALTER TABLE users ADD COLUMN passwordHash TEXT`);
+    if (!hasPasswordSalt) db.exec(`ALTER TABLE users ADD COLUMN passwordSalt TEXT`);
+    if (!hasProvider) db.exec(`ALTER TABLE users ADD COLUMN provider TEXT`);
+    if (!hasProviderId) db.exec(`ALTER TABLE users ADD COLUMN providerId TEXT`);
+    if (!hasCreatedAt) db.exec(`ALTER TABLE users ADD COLUMN createdAt TEXT`);
+  } catch (e) {
+    // If ALTER fails (e.g., older SQLite), ignore; columns may already exist
+    try { /* noop */ } catch (_) {}
+  }
+
   return db;
 }

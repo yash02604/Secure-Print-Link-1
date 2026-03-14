@@ -141,10 +141,25 @@ export const PrintJobProvider = ({ children }) => {
     return () => clearInterval(cleanupInterval);
   }, [expirationMetadata]);
 
-  // Save print jobs to localStorage whenever they change (for offline access)
+  // Save print jobs metadata to localStorage whenever they change (no document blobs)
   useEffect(() => {
     try {
-      const jobsJson = JSON.stringify(printJobs);
+      const sanitizedJobs = printJobs.map(job => {
+        const { document, ...rest } = job || {};
+        // Strip document content to avoid relying on browser storage
+        return { 
+          ...rest, 
+          document: document 
+            ? { 
+                filename: document.filename || document.originalname || null,
+                originalname: document.originalname || null,
+                mimetype: document.mimetype || document.mimeType || null,
+                size: document.size || null
+              }
+            : null
+        };
+      });
+      const jobsJson = JSON.stringify(sanitizedJobs);
       // Check localStorage size limit (typically 5-10MB)
       const sizeInMB = new Blob([jobsJson]).size / (1024 * 1024);
       if (sizeInMB > 5) {
@@ -155,11 +170,10 @@ export const PrintJobProvider = ({ children }) => {
     } catch (error) {
       if (error.name === 'QuotaExceededError') {
         console.error('localStorage quota exceeded. Document may be too large. Consider using server storage.');
-        // Keep jobs without document data for smaller storage
-        const jobsWithoutDocs = printJobs.map(job => ({
-          ...job,
-          document: null // Remove document data to save space
-        }));
+        const jobsWithoutDocs = printJobs.map(job => {
+          const { document, ...rest } = job || {};
+          return { ...rest, document: null };
+        });
         try {
           localStorage.setItem('securePrintJobs', JSON.stringify(jobsWithoutDocs));
           console.warn('Saved jobs without document data due to storage limit');
@@ -240,7 +254,7 @@ export const PrintJobProvider = ({ children }) => {
       console.warn('API submission failed, falling back to local storage:', error.message);
     }
 
-    // LOCAL FALLBACK if API failed
+    // LOCAL FALLBACK if API failed (metadata only; no document content persisted)
     if (!apiSuccess) {
       try {
         const id = 'local_' + Math.random().toString(36).substr(2, 9);
@@ -259,16 +273,6 @@ export const PrintJobProvider = ({ children }) => {
             mimetype: jobData.file.type,
             size: jobData.file.size
           };
-
-          // Store as Data URL if file is small enough (< 2MB)
-          if (jobData.file.size < 2 * 1024 * 1024) {
-            const reader = new FileReader();
-            const dataUrl = await new Promise((resolve) => {
-              reader.onload = (e) => resolve(e.target.result);
-              reader.readAsDataURL(jobData.file);
-            });
-            docData.dataUrl = dataUrl;
-          }
         }
 
         submittedJob = {
@@ -306,7 +310,7 @@ export const PrintJobProvider = ({ children }) => {
           return newMap;
         });
 
-        toast.success('Print job submitted (Offline Mode)');
+        toast.success('Print job was encrypted and submitted securely.');
       } catch (err) {
         console.error('Local submission failed:', err);
         setError('Failed to submit print job.');

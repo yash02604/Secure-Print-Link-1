@@ -5,6 +5,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
+import { Readable } from 'stream';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -285,15 +286,6 @@ router.get('/:id', (req, res) => {
   if (!job) return res.status(404).json({ error: 'Job not found' });
   if (token && token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
 
-  // Check if job has been viewed already (single-view enforcement)
-  if (job.viewCount > 0) {
-    return res.status(403).json({ 
-      error: 'Document already viewed (one-time only)',
-      alreadyViewed: true,
-      viewCount: job.viewCount
-    });
-  }
-
   // Fetch document metadata and analysis from DB
   try {
     const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
@@ -336,7 +328,55 @@ router.get('/:id', (req, res) => {
   res.json({ job });
 });
 
-// View job document (single-use only)
+// Stream decrypted file (inline) for preview/printing
+router.get('/:id/file', (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+  const { token } = req.query;
+
+  const currentServerTime = Date.now();
+  const metadata = expirationMetadata.get(id);
+
+  if (metadata) {
+    if (metadata.token !== token) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+    if (currentServerTime >= metadata.expiresAt) {
+      expirationMetadata.delete(id);
+      if (metadata.filePath) {
+        try {
+          if (fs.existsSync(metadata.filePath)) {
+            fs.unlinkSync(metadata.filePath);
+          }
+        } catch (_) {}
+      }
+      return res.status(410).json({ error: 'Print link has expired' });
+    }
+  }
+
+  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (token && token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
+
+  try {
+    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    const decryptedBuffer = decryptDocumentForJob(document.content, id);
+    res.setHeader('Content-Type', document.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(document.filename || 'document')}"`);
+    res.setHeader('Content-Length', Buffer.byteLength(decryptedBuffer));
+    res.setHeader('Cache-Control', 'no-store');
+    Readable.from(decryptedBuffer).pipe(res);
+  } catch (err) {
+    console.error('Error streaming document:', err);
+    res.status(500).json({ error: 'Failed to stream document' });
+  }
+});
+
+// View job document (multi-use; increments view count and returns document)
 router.post('/:id/view', (req, res) => {
   const db = req.db;
   const { id } = req.params;
@@ -376,22 +416,18 @@ router.post('/:id/view', (req, res) => {
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
     
-    // SINGLE-USE ENFORCEMENT: Check if already viewed
-    if (job.viewCount > 0) {
-      return res.status(403).json({ 
-        error: 'Document already viewed (one-time only)',
-        alreadyViewed: true,
-        viewCount: job.viewCount
-      });
-    }
-
-    // Record the view
+    // Record the view (increment count on each view)
     const now = new Date().toISOString();
     const viewId = nanoid();
     
     // Update job view count and timestamps
-    db.prepare('UPDATE jobs SET viewCount = viewCount + 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
-      .run(now, now, id);
+    if (job.viewCount > 0) {
+      db.prepare('UPDATE jobs SET viewCount = viewCount + 1, lastViewedAt = ? WHERE id = ?')
+        .run(now, id);
+    } else {
+      db.prepare('UPDATE jobs SET viewCount = 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
+        .run(now, now, id);
+    }
     
     // Log the view for audit trail
     db.prepare(`INSERT INTO job_views (id, jobId, userId, viewedAt, userAgent, ipAddress) 
@@ -407,10 +443,10 @@ router.post('/:id/view', (req, res) => {
 
     // Update in-memory metadata
     if (metadata) {
-      metadata.viewCount = 1;
-      metadata.firstViewedAt = now;
+      metadata.viewCount = (metadata.viewCount || 0) + 1;
+      metadata.firstViewedAt = metadata.firstViewedAt || now;
       expirationMetadata.set(id, metadata);
-      console.log(`[View] Job ${id} viewed for the first time by user ${userId}`);
+      console.log(`[View] Job ${id} viewed by user ${userId} (count=${metadata.viewCount})`);
     }
 
     // Return document data for preview (NOT download)
@@ -496,14 +532,6 @@ router.post('/:id/release', (req, res) => {
       return res.status(409).json({ error: 'Print job has already been released' });
     }
     
-    // Check if job has been viewed (single-use view must occur before release)
-    if (job.viewCount === 0) {
-      return res.status(403).json({ 
-        error: 'Document must be viewed before releasing. Click the view button first.',
-        requiresView: true
-      });
-    }
-
     // Update job status to released and track release metadata
     db.prepare('UPDATE jobs SET status = ?, releasedAt = ?, printerId = ?, releasedBy = ? WHERE id = ?')
       .run('released', new Date().toISOString(), printerId || null, releasedBy || null, id);
