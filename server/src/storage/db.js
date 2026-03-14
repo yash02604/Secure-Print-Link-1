@@ -100,17 +100,6 @@ export function createDb(dbPath) {
       FOREIGN KEY(jobId) REFERENCES jobs(id) ON DELETE CASCADE
     );
     
-    -- Share links for cross-browser viewing
-    CREATE TABLE IF NOT EXISTS share_links (
-      id TEXT PRIMARY KEY,
-      jobId TEXT NOT NULL,
-      token TEXT NOT NULL UNIQUE,
-      viewsRemaining INTEGER DEFAULT 3,
-      expiresAt TEXT NOT NULL,
-      createdAt TEXT NOT NULL,
-      FOREIGN KEY(jobId) REFERENCES jobs(id) ON DELETE CASCADE
-    );
-    
     -- Chat system tables
     CREATE TABLE IF NOT EXISTS conversations (
       id TEXT PRIMARY KEY,
@@ -152,46 +141,6 @@ export function createDb(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_messages_createdAt ON messages(createdAt);
     CREATE INDEX IF NOT EXISTS idx_messages_readStatus ON messages(readStatus);
   `);
-
-  // Ensure users table has password columns for local auth
-  try {
-    const columns = db.prepare(`PRAGMA table_info(users)`).all();
-    const hasPasswordHash = columns.some(c => c.name === 'passwordHash');
-    const hasPasswordSalt = columns.some(c => c.name === 'passwordSalt');
-    const hasProvider = columns.some(c => c.name === 'provider');
-    const hasProviderId = columns.some(c => c.name === 'providerId');
-    const hasCreatedAt = columns.some(c => c.name === 'createdAt');
-
-    if (!hasPasswordHash) db.exec(`ALTER TABLE users ADD COLUMN passwordHash TEXT`);
-    if (!hasPasswordSalt) db.exec(`ALTER TABLE users ADD COLUMN passwordSalt TEXT`);
-    if (!hasProvider) db.exec(`ALTER TABLE users ADD COLUMN provider TEXT`);
-    if (!hasProviderId) db.exec(`ALTER TABLE users ADD COLUMN providerId TEXT`);
-    if (!hasCreatedAt) db.exec(`ALTER TABLE users ADD COLUMN createdAt TEXT`);
-  } catch (e) {
-    // If ALTER fails (e.g., older SQLite), ignore; columns may already exist
-    try { /* noop */ } catch (_) {}
-  }
-
-  // Ensure share_links table exists (idempotent)
-  try {
-    db.prepare('SELECT 1 FROM share_links LIMIT 1').get();
-  } catch (e) {
-    try {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS share_links (
-          id TEXT PRIMARY KEY,
-          jobId TEXT NOT NULL,
-          token TEXT NOT NULL UNIQUE,
-          viewsRemaining INTEGER DEFAULT 3,
-          expiresAt TEXT NOT NULL,
-          createdAt TEXT NOT NULL,
-          FOREIGN KEY(jobId) REFERENCES jobs(id) ON DELETE CASCADE
-        );
-      `);
-    } catch (e2) {
-      try { /* noop */ } catch (_) {}
-    }
-  }
 
   return db;
 }

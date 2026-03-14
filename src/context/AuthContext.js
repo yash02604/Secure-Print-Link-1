@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import CryptoJS from 'crypto-js';
- 
 
 const AuthContext = createContext();
 
@@ -67,8 +66,11 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = async (username, password) => {
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Simulate API call delay
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
     const user = mockUsers.find(u => u.username === username && u.password === password);
+    
     if (user) {
       const { password: _, ...userWithoutPassword } = user;
       setCurrentUser(userWithoutPassword);
@@ -110,8 +112,6 @@ export const AuthProvider = ({ children }) => {
   const generateSecureToken = () => {
     return CryptoJS.lib.WordArray.random(32).toString();
   };
-
-  
 
   const value = {
     currentUser,

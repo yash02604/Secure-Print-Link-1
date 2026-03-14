@@ -306,7 +306,7 @@ export const PrintJobProvider = ({ children }) => {
           return newMap;
         });
 
-        toast.success('Print job was encrypted and submitted securely.');
+        toast.success('Print job submitted (Offline Mode)');
       } catch (err) {
         console.error('Local submission failed:', err);
         setError('Failed to submit print job.');

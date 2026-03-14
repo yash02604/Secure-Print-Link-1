@@ -3,7 +3,6 @@ import { useDropzone } from 'react-dropzone';
 import styled from 'styled-components';
 import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
-import { useUser } from '@clerk/clerk-react';
 import { usePrintJob } from '../context/PrintJobContext';
 import { QRCodeCanvas } from 'qrcode.react';
 
@@ -368,7 +367,6 @@ const CopyButton = styled.button`
 
 const PrintJobSubmission = () => {
   const { currentUser } = useAuth();
-  const { user } = useUser();
   const { submitPrintJob, isSubmitting, error: apiError, setError: setApiError } = usePrintJob();
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -501,8 +499,7 @@ const PrintJobSubmission = () => {
     );
   }
 
-  const effectiveUser = user ? { id: user.id, name: user.fullName || user.username } : currentUser;
-  if (!effectiveUser) {
+  if (!currentUser) {
     return (
       <div style={{ color: 'red', padding: 32, textAlign: 'center' }}>
         <h2>You must be logged in to submit a print job.</h2>
@@ -554,8 +551,8 @@ const PrintJobSubmission = () => {
       try {
         const jobPayload = {
           ...jobData,
-          userId: effectiveUser.id,
-          userName: effectiveUser.name,
+          userId: currentUser.id,
+          userName: currentUser.name,
           file: selectedFile
         };
 
@@ -662,8 +659,7 @@ const PrintJobSubmission = () => {
                 </div>
                 <div className="upload-hint">
                   or click to select a file<br/>
-                  <strong>Supported formats:</strong> PDF, (Word, Excel, PowerPoint can be securely downloaded), Images and other Document.
-                  The Upload limit is 2MB.
+                  <strong>Supported formats:</strong> PDF, Word, Excel, PowerPoint, Text, Images, RTF, JSON, HTML
                 </div>
                 {validationErrors.file && (
                   <div style={{ color: 'var(--error-color)', marginTop: '10px', fontSize: '14px', fontWeight: '600' }}>

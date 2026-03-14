@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import { useAuth } from '../context/AuthContext';
 import { usePrintJob } from '../context/PrintJobContext';
 import { FaPrint, FaFileAlt, FaServer, FaChartBar, FaCog, FaClock, FaCheckCircle, FaExclamationTriangle, FaEye } from 'react-icons/fa';
 import EmptyState from '../components/EmptyState';
-import { useUser } from '@clerk/clerk-react';
 
 const DashboardContainer = styled.div`
   display: flex;
@@ -364,7 +363,6 @@ const SystemStatus = styled.div`
 
 const Dashboard = () => {
   const { currentUser } = useAuth();
-  const { user } = useUser();
   const { printJobs, getJobStatistics, printers: allPrinters, isFetching } = usePrintJob();
   const navigate = useNavigate();
   const [userJobs, setUserJobs] = useState([]);
@@ -380,24 +378,20 @@ const Dashboard = () => {
   });
 
   // Filter user's jobs and calculate statistics
-  const effectiveUser = useMemo(
-    () => (user ? { id: user.id, name: user.fullName || user.username } : currentUser),
-    [user, currentUser]
-  );
   useEffect(() => {
-    if (printJobs && effectiveUser?.id) {
-      const userJobs = printJobs.filter(job => job.userId === effectiveUser.id);
+    if (printJobs && currentUser?.id) {
+      const userJobs = printJobs.filter(job => job.userId === currentUser.id);
       setUserJobs(userJobs);
       
       // Calculate real-time statistics from the same data source
-      const jobStats = getJobStatistics(effectiveUser.id);
+      const jobStats = getJobStatistics(currentUser.id);
       setStats(jobStats);
     }
     
     if (allPrinters) {
       setPrinters(allPrinters);
     }
-  }, [printJobs, effectiveUser, getJobStatistics, allPrinters]);
+  }, [printJobs, currentUser, getJobStatistics, allPrinters]);
 
   const onlinePrinters = printers.filter(p => p.status === 'online');
   const offlinePrinters = printers.filter(p => p.status === 'offline');

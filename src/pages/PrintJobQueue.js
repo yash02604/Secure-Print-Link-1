@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
-import { useUser } from '@clerk/clerk-react';
 import { usePrintJob } from '../context/PrintJobContext';
 import { useNavigate } from 'react-router-dom';
 import EmptyState from '../components/EmptyState';
@@ -327,7 +326,6 @@ const LoadingWrapper = styled.div`
 
 const PrintJobQueue = () => {
   const { currentUser } = useAuth();
-  const { user } = useUser();
   const { printJobs, deletePrintJob, viewPrintJob, releasePrintJob, printers } = usePrintJob();
   const navigate = useNavigate();
   const [filteredJobs, setFilteredJobs] = useState([]);
@@ -342,14 +340,13 @@ const PrintJobQueue = () => {
   const [loading, setLoading] = useState(true);
 
   // Filter user's jobs only
-  const effectiveUserId = user?.id || currentUser?.id;
   useEffect(() => {
-    if (printJobs && effectiveUserId) {
-      const userJobs = printJobs.filter(job => job.userId === effectiveUserId);
+    if (printJobs && currentUser?.id) {
+      const userJobs = printJobs.filter(job => job.userId === currentUser.id);
       setUserJobs(userJobs);
       setLoading(false);
     }
-  }, [printJobs, effectiveUserId]);
+  }, [printJobs, currentUser]);
 
   // Apply filters and sorting
   useEffect(() => {
@@ -415,7 +412,7 @@ const PrintJobQueue = () => {
     }
 
     try {
-      const documentData = await viewPrintJob(jobId, job.secureToken, effectiveUserId);
+      const documentData = await viewPrintJob(jobId, job.secureToken, currentUser.id);
       if (documentData?.dataUrl) {
         // Open in new tab for preview (not download)
         window.open(documentData.dataUrl, '_blank');
@@ -440,7 +437,7 @@ const PrintJobQueue = () => {
 
     setLoading(true);
     try {
-      await releasePrintJob(jobId, printer.id, effectiveUserId, job.secureToken);
+      await releasePrintJob(jobId, printer.id, currentUser.id, job.secureToken);
       // No toast here, Context handles it
     } catch (error) {
       // Context handles toast
