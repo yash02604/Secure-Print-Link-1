@@ -12,8 +12,8 @@ const AppRoot = PUBLISHABLE_KEY ? (
   <ClerkProvider
     publishableKey={PUBLISHABLE_KEY}
     afterSignOutUrl="/"
-    afterSignInUrl="/dashboard"
-    afterSignUpUrl="/dashboard"
+    signInFallbackRedirectUrl="/dashboard"
+    signUpFallbackRedirectUrl="/dashboard"
   >
     <App />
   </ClerkProvider>
