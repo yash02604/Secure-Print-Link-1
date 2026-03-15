@@ -1,5 +1,9 @@
 {
   "rewrites": [
+    { "source": "/api/jobs/:id/content", "destination": "/api/jobs?id=:id&action=content" },
+    { "source": "/api/jobs/:id/view", "destination": "/api/jobs?id=:id&action=view" },
+    { "source": "/api/jobs/:id/release", "destination": "/api/release?id=:id" },
+    { "source": "/api/jobs/:id", "destination": "/api/jobs?id=:id" },
     { "source": "/api/:path*", "destination": "/api/:path*" },
     { "source": "/((?!api/).*)", "destination": "/" }
   ]
