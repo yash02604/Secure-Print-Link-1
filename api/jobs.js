@@ -5,7 +5,7 @@ import {
   createFileInputFromBuffer,
   generateUniqueId,
   appwriteQuery
-} from '../server/src/appwrite.js';
+} from '../server/src/storage/appwrite.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
 const makeId = (size = 21) => crypto.randomBytes(Math.max(16, size)).toString('base64url').slice(0, size);
