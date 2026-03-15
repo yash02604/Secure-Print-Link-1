@@ -402,8 +402,13 @@ io.on('connection', (socket) => {
   });
 });
 
-httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`SecurePrint backend running on http://0.0.0.0:${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Socket.IO enabled for real-time chat`);
-});
+export default app;
+export { app, io, httpServer };
+
+if (process.argv[1] && process.argv[1] === __filename) {
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`SecurePrint backend running on http://0.0.0.0:${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`Socket.IO enabled for real-time chat`);
+  });
+}
