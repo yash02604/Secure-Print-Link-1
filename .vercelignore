@@ -10,6 +10,5 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 *.pem
-server/
 coverage/
 .nyc_output/
