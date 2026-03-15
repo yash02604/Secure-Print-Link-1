@@ -1,15 +1,12 @@
 import dotenv from 'dotenv';
 import express from 'express';
-import { createServer } from 'http';
-import { Server } from 'socket.io';
 import cors from 'cors';
 import morgan from 'morgan';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { createAppwriteServices, appwriteQuery, createFileInputFromBuffer, generateUniqueId } from './storage/appwrite.js';
+import { createAppwriteServices, createFileInputFromBuffer, generateUniqueId } from './storage/appwrite.js';
 import jobsRouter from './web/jobs.routes.js';
 import printersRouter from './web/printers.routes.js';
-import chatRouter from './web/chat.routes.js';
 import authRouter from './web/auth.routes.js';
 import fs from 'fs';
 import { nanoid } from 'nanoid';
@@ -26,14 +23,6 @@ dotenv.config({ path: join(__dirname, '../../.env') });
 dotenv.config({ path: join(__dirname, '../../env.local') });
 
 const app = express();
-const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
-    methods: ['GET', 'POST'],
-    credentials: true
-  }
-});
 const PORT = process.env.PORT || 4000;
 
 app.use(cors());
@@ -91,7 +80,6 @@ const authMiddleware = (req, res, next) => {
 // routes
 app.use('/api/jobs', (req, res, next) => { req.appwrite = appwrite; next(); }, jobsRouter);
 app.use('/api/printers', (req, res, next) => { req.appwrite = appwrite; next(); }, printersRouter);
-app.use('/api/chat', (req, res, next) => { req.appwrite = appwrite; next(); }, chatRouter);
 app.use('/api/auth', (req, res, next) => { req.appwrite = appwrite; next(); }, authRouter);
 
 app.post('/upload', authMiddleware, upload.single('file'), async (req, res, next) => {
@@ -215,200 +203,12 @@ app.use((err, req, res, next) => {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message || 'Server error' });
 });
-
-// Socket.IO for real-time chat
-const onlineUsers = new Map(); // userId/printerShopId -> socketId
-
-// Generate deterministic conversation ID (must match chat.routes.js)
-function generateConversationId(userId, printerShopId) {
-  const sortedIds = [userId, printerShopId].sort();
-  return crypto
-    .createHash('sha256')
-    .update(sortedIds.join(':'))
-    .digest('hex')
-    .substring(0, 32);
-}
-
-const getConversationDoc = async (conversationId) => {
-  if (!appwrite) return null;
-  return appwrite.databases.getDocument(
-    appwrite.databaseId,
-    appwrite.conversationsCollectionId,
-    conversationId
-  );
-};
-
-io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
-
-  // User/Printer joins with their identity
-  socket.on('join', ({ userId, printerShopId, role }) => {
-    const identity = role === 'user' ? userId : printerShopId;
-    socket.identity = identity;
-    socket.role = role;
-    onlineUsers.set(identity, socket.id);
-    console.log(`${role} ${identity} joined`);
-
-    // Broadcast online status
-    socket.broadcast.emit('user_online', { identity, role });
-  });
-
-  // Join a specific conversation room
-  socket.on('join_conversation', ({ conversationId }) => {
-    socket.join(conversationId);
-    console.log(`${socket.identity} joined conversation ${conversationId}`);
-  });
-
-  // Send message
-  socket.on('send_message', async ({ conversationId, senderId, senderRole, message }) => {
-    try {
-      if (!appwrite) {
-        socket.emit('error', { message: 'Appwrite is not configured' });
-        return;
-      }
-
-      const conversation = await getConversationDoc(conversationId);
-      if (!conversation) {
-        socket.emit('error', { message: 'Conversation not found' });
-        return;
-      }
-
-      // Validate sender has access to this conversation
-      if (senderRole === 'user' && conversation.userId !== senderId) {
-        socket.emit('error', { message: 'Unauthorized' });
-        return;
-      }
-      if (senderRole === 'printer' && conversation.printerShopId !== senderId) {
-        socket.emit('error', { message: 'Unauthorized' });
-        return;
-      }
-
-      const messageId = nanoid();
-      const now = new Date().toISOString();
-
-      await appwrite.databases.createDocument(
-        appwrite.databaseId,
-        appwrite.messagesCollectionId,
-        messageId,
-        {
-          messageId,
-          conversationId,
-          senderId,
-          senderRole,
-          message,
-          createdAt: now,
-          readStatus: false
-        }
-      );
-
-      await appwrite.databases.updateDocument(
-        appwrite.databaseId,
-        appwrite.conversationsCollectionId,
-        conversationId,
-        {
-          lastMessageAt: now,
-          updatedAt: now
-        }
-      );
-
-      const newMessage = {
-        id: messageId,
-        conversationId,
-        senderId,
-        senderRole,
-        message,
-        createdAt: now,
-        readStatus: 0
-      };
-
-      // Emit to all clients in this conversation room
-      io.to(conversationId).emit('new_message', newMessage);
-
-      // Also emit to specific recipient if they're online
-      const recipientId = senderRole === 'user' ? conversation.printerShopId : conversation.userId;
-      const recipientSocketId = onlineUsers.get(recipientId);
-      if (recipientSocketId) {
-        io.to(recipientSocketId).emit('new_message_notification', {
-          conversationId,
-          message: newMessage
-        });
-      }
-    } catch (error) {
-      console.error('Error sending message:', error);
-      socket.emit('error', { message: 'Failed to send message' });
-    }
-  });
-
-  // Typing indicator
-  socket.on('typing', ({ conversationId, userId, printerShopId, isTyping }) => {
-    socket.to(conversationId).emit('user_typing', { conversationId, userId, printerShopId, isTyping });
-  });
-
-  // Mark messages as read
-  socket.on('mark_read', ({ conversationId, userId, printerShopId }) => {
-    (async () => {
-      try {
-        if (!appwrite) {
-          return;
-        }
-        const conversation = await getConversationDoc(conversationId);
-        if (!conversation) {
-          return;
-        }
-
-        if (userId && conversation.userId !== userId) {
-          return;
-        }
-        if (printerShopId && conversation.printerShopId !== printerShopId) {
-          return;
-        }
-
-        const senderRoleToMark = userId ? 'printer' : 'user';
-        const unread = await appwrite.databases.listDocuments(
-          appwrite.databaseId,
-          appwrite.messagesCollectionId,
-          [
-            appwriteQuery.equal('conversationId', conversationId),
-            appwriteQuery.equal('senderRole', senderRoleToMark),
-            appwriteQuery.equal('readStatus', false),
-            appwriteQuery.limit(100)
-          ]
-        );
-
-        await Promise.all(
-          unread.documents.map((doc) =>
-            appwrite.databases.updateDocument(
-              appwrite.databaseId,
-              appwrite.messagesCollectionId,
-              doc.$id,
-              { readStatus: true }
-            )
-          )
-        );
-
-        socket.to(conversationId).emit('messages_read', { conversationId });
-      } catch (error) {
-        console.error('Error marking messages as read:', error);
-      }
-    })();
-  });
-
-  socket.on('disconnect', () => {
-    if (socket.identity) {
-      onlineUsers.delete(socket.identity);
-      socket.broadcast.emit('user_offline', { identity: socket.identity, role: socket.role });
-      console.log(`${socket.role} ${socket.identity} disconnected`);
-    }
-  });
-});
-
 export default app;
-export { app, io, httpServer };
+export { app };
 
 if (process.argv[1] && process.argv[1] === __filename) {
-  httpServer.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`SecurePrint backend running on http://0.0.0.0:${PORT}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`Socket.IO enabled for real-time chat`);
   });
 }

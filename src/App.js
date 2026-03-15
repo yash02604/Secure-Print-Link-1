@@ -13,13 +13,11 @@ import Authentication from './pages/Authentication';
 import PrintRelease from './pages/PrintRelease';
 import Reports from './pages/Reports';
 import Settings from './pages/Settings';
-import Chat from './pages/Chat';
 import Layout from './components/Layout';
 
 // Context
 import { AuthProvider } from './context/AuthContext';
 import { PrintJobProvider } from './context/PrintJobContext';
-import { ChatProvider } from './context/ChatContext';
 import { useAuth as useClerkAuth } from '@clerk/clerk-react';
 
 const RequireAuth = ({ children }) => {
@@ -60,10 +58,9 @@ function App() {
   return (
     <AuthProvider>
       <PrintJobProvider>
-        <ChatProvider>
-          <ErrorBoundary>
-            <Router>
-              <Routes>
+        <ErrorBoundary>
+          <Router>
+            <Routes>
               <Route
                 path="/login"
                 element={
@@ -166,22 +163,11 @@ function App() {
                   </RequireAuth>
                 }
               />
-              <Route
-                path="/chat"
-                element={
-                  <RequireAuth>
-                    <Layout>
-                      <Chat />
-                    </Layout>
-                  </RequireAuth>
-                }
-              />
               <Route path="/" element={<Navigate to="/login" replace />} />
             </Routes>
           </Router>
           <ToastContainer />
         </ErrorBoundary>
-      </ChatProvider>
     </PrintJobProvider>
   </AuthProvider>
 );

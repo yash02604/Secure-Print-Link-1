@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import Header from './Header';
 import Sidebar from './Sidebar';
-import ChatFloatingWidget from './ChatFloatingWidget';
 
 const LayoutContainer = styled.div`
   display: flex;
@@ -60,7 +59,6 @@ const Layout = ({ children }) => {
       <MainContent>
         {children}
       </MainContent>
-      <ChatFloatingWidget />
     </LayoutContainer>
   );
 };

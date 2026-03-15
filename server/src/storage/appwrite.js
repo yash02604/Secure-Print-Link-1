@@ -31,8 +31,6 @@ export const createAppwriteServices = () => {
     bucketId: process.env.APPWRITE_BUCKET_ID,
     usersCollectionId: process.env.APPWRITE_USERS_COLLECTION_ID || 'users',
     printersCollectionId: process.env.APPWRITE_PRINTERS_COLLECTION_ID || 'printers',
-    conversationsCollectionId: process.env.APPWRITE_CONVERSATIONS_COLLECTION_ID || 'conversations',
-    messagesCollectionId: process.env.APPWRITE_MESSAGES_COLLECTION_ID || 'messages',
     filesCollectionId: process.env.APPWRITE_FILES_COLLECTION_ID || 'encrypted_files'
   };
 };
