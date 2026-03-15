@@ -103,8 +103,6 @@ Thumbs.db
 *.db-wal
 
 # Upload files
-server/uploads/*
-!server/uploads/.gitkeep
 
 # Test files
 testsprite_tests/
