@@ -1,6 +1,6 @@
 import multer from 'multer';
 import crypto from 'crypto';
-import { createAppwriteServices, createFileInputFromBuffer, generateUniqueId } from '../server/src/appwrite.js';
+import { createAppwriteServices, createFileInputFromBuffer, generateUniqueId } from './appwrite.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
 const makeId = (size = 21) => crypto.randomBytes(Math.max(16, size)).toString('base64url').slice(0, size);

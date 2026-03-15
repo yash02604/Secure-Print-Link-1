@@ -5,7 +5,7 @@ import {
   createFileInputFromBuffer,
   generateUniqueId,
   appwriteQuery
-} from '../server/src/storage/appwrite.js';
+} from './appwrite.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
 const makeId = (size = 21) => crypto.randomBytes(Math.max(16, size)).toString('base64url').slice(0, size);
@@ -16,6 +16,7 @@ const supportedUploadExtensions = new Set([
   '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg',
   '.json', '.html', '.htm'
 ]);
+
 const getExtension = (filename = '') => {
   const lower = filename.toLowerCase();
   const idx = lower.lastIndexOf('.');
@@ -85,10 +86,14 @@ const toBuffer = async (input) => {
   throw new Error('Unsupported Appwrite file payload');
 };
 
-const parseJob = (doc, req) => {
+const getOrigin = (req) => {
   const host = req.headers['x-forwarded-host'] || req.headers.host;
   const protocol = req.headers['x-forwarded-proto'] || 'https';
-  const origin = process.env.PUBLIC_BASE_URL || `${protocol}://${host}`;
+  return process.env.PUBLIC_BASE_URL || `${protocol}://${host}`;
+};
+
+const parseJob = (doc, req) => {
+  const origin = getOrigin(req);
   const jobId = doc.jobId || doc.$id;
   return {
     id: jobId,
@@ -121,6 +126,7 @@ const parseJob = (doc, req) => {
 };
 
 const isExpired = (expiresAt) => expiresAt ? Date.now() >= new Date(expiresAt).getTime() : false;
+
 const deleteFileSilently = async (appwrite, fileId) => {
   if (!fileId || !appwrite.bucketId) return;
   try {
@@ -131,12 +137,11 @@ const deleteFileSilently = async (appwrite, fileId) => {
     }
   }
 };
+
 const deleteJobPermanently = async (appwrite, jobDoc) => {
   await deleteFileSilently(appwrite, jobDoc.fileId);
   await appwrite.databases.deleteDocument(appwrite.databaseId, appwrite.collectionId, jobDoc.$id || jobDoc.jobId);
 };
-
-const getAppwrite = () => createAppwriteServices();
 
 const runUpload = (req, res) =>
   new Promise((resolve, reject) => {
@@ -271,9 +276,7 @@ const createJob = async (req, res, appwrite) => {
   const notes = body.notes || '';
   const baseCost = 0.1;
   const cost = +(baseCost * pages * copies * (color ? 2 : 1) * (duplex ? 0.8 : 1)).toFixed(2);
-  const host = req.headers['x-forwarded-host'] || req.headers.host;
-  const protocol = req.headers['x-forwarded-proto'] || 'https';
-  const origin = process.env.PUBLIC_BASE_URL || `${protocol}://${host}`;
+  const origin = getOrigin(req);
   const releaseLink = `${origin.replace(/\/$/, '')}/release/${jobId}?token=${secureToken}`;
 
   const encryptedContent = encryptDocumentForJob(req.file.buffer, jobId);
@@ -337,7 +340,7 @@ const createJob = async (req, res, appwrite) => {
       status: 'pending',
       cost,
       submittedAt,
-      secureToken: secureToken,
+      secureToken,
       releaseLink,
       expiresAt
     }
@@ -350,7 +353,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const appwrite = getAppwrite();
+    const appwrite = createAppwriteServices();
     const id = req.query.id || req.query.jobId || null;
     const action = req.query.action || null;
     const token = req.query.token || req.body?.token || null;

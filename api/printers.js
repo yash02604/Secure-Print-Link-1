@@ -1,4 +1,4 @@
-import { createAppwriteServices, appwriteQuery } from '../server/src/storage/appwrite.js';
+import { createAppwriteServices, appwriteQuery } from './appwrite.js';
 
 const staticPrinters = [
   { id: 'printer1', name: 'Main Office Printer', location: 'Main Office', model: '', status: 'online', ip: '', capabilities: [], department: 'All' },

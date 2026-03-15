@@ -1,4 +1,4 @@
-import { createAppwriteServices } from '../server/src/appwrite.js';
+import { createAppwriteServices } from './appwrite.js';
 
 const isExpired = (expiresAt) => expiresAt ? Date.now() >= new Date(expiresAt).getTime() : false;
 
