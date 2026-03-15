@@ -31,8 +31,11 @@ const encryptDocumentForJob = (buffer, jobId) => {
   return Buffer.concat([iv, authTag, encryptedData]);
 };
 
-const decryptDocumentForJob = (buffer, jobId) => {
+const decryptDocumentForJob = (buffer, jobId, { strict = false } = {}) => {
   if (!buffer || buffer.length < 28) {
+    if (strict) {
+      throw new Error('Encrypted document payload is invalid or empty');
+    }
     return buffer;
   }
 
@@ -46,6 +49,9 @@ const decryptDocumentForJob = (buffer, jobId) => {
     decipher.setAuthTag(authTag);
     return Buffer.concat([decipher.update(encryptedData), decipher.final()]);
   } catch (err) {
+    if (strict) {
+      throw new Error(`Failed to decrypt document for job ${jobId}`);
+    }
     console.error('Failed to decrypt document for job, falling back to raw content:', jobId, err);
     return buffer;
   }
@@ -69,6 +75,9 @@ const toBuffer = async (input) => {
   if (Buffer.isBuffer(input)) return input;
   if (input instanceof ArrayBuffer) return Buffer.from(input);
   if (ArrayBuffer.isView(input)) return Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+  if (input?.body) {
+    return toBuffer(input.body);
+  }
   if (input && typeof input.getReader === 'function') {
     const reader = input.getReader();
     const chunks = [];
@@ -96,7 +105,7 @@ const toBuffer = async (input) => {
 const downloadAndDecryptJobFile = async (appwrite, jobDoc, jobId) => {
   const encryptedPayload = await appwrite.storage.getFileDownload(appwrite.bucketId, jobDoc.fileId);
   const encryptedBuffer = await toBuffer(encryptedPayload);
-  return decryptDocumentForJob(encryptedBuffer, jobId);
+  return decryptDocumentForJob(encryptedBuffer, jobId, { strict: true });
 };
 
 const appwriteReady = (req, res) => {
