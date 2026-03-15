@@ -69,6 +69,16 @@ const toBuffer = async (input) => {
   if (Buffer.isBuffer(input)) return input;
   if (input instanceof ArrayBuffer) return Buffer.from(input);
   if (ArrayBuffer.isView(input)) return Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+  if (input && typeof input.getReader === 'function') {
+    const reader = input.getReader();
+    const chunks = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks);
+  }
   if (input && typeof input.arrayBuffer === 'function') {
     const arrayBuffer = await input.arrayBuffer();
     return Buffer.from(arrayBuffer);
@@ -83,9 +93,23 @@ const toBuffer = async (input) => {
   throw new Error('Unsupported Appwrite file payload');
 };
 
+const downloadAndDecryptJobFile = async (appwrite, jobDoc, jobId) => {
+  const encryptedPayload = await appwrite.storage.getFileDownload(appwrite.bucketId, jobDoc.fileId);
+  const encryptedBuffer = await toBuffer(encryptedPayload);
+  return decryptDocumentForJob(encryptedBuffer, jobId);
+};
+
 const appwriteReady = (req, res) => {
   if (!req.appwrite) {
     res.status(500).json({ error: 'Appwrite is not configured on the server' });
+    return false;
+  }
+  return true;
+};
+
+const storageReady = (appwrite, res) => {
+  if (!appwrite?.bucketId) {
+    res.status(500).json({ error: 'Appwrite storage bucket is not configured on the server' });
     return false;
   }
   return true;
@@ -247,6 +271,7 @@ router.post('/', (req, res, next) => {
   if (!appwriteReady(req, res)) return;
 
   const appwrite = req.appwrite;
+  if (!storageReady(appwrite, res)) return;
   const body = req.body || {};
   const userId = body.userId;
   const userName = body.userName;
@@ -389,6 +414,7 @@ router.get('/cleanup/expired', async (req, res) => {
 router.get('/:id', async (req, res) => {
   if (!appwriteReady(req, res)) return;
   const appwrite = req.appwrite;
+  if (!storageReady(appwrite, res)) return;
   const { id } = req.params;
   const { token } = req.query;
 
@@ -411,9 +437,7 @@ router.get('/:id', async (req, res) => {
       });
     }
 
-    const encryptedPayload = await appwrite.storage.getFileDownload(appwrite.bucketId, jobDoc.fileId);
-    const encryptedBuffer = await toBuffer(encryptedPayload);
-    const decryptedBuffer = decryptDocumentForJob(encryptedBuffer, id);
+    const decryptedBuffer = await downloadAndDecryptJobFile(appwrite, jobDoc, id);
     const base64 = decryptedBuffer.toString('base64');
     const job = parseJob(jobDoc, req);
     job.document = {
@@ -433,9 +457,48 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+router.get('/:id/content', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
+  if (!storageReady(appwrite, res)) return;
+  const { id } = req.params;
+  const { token } = req.query;
+
+  try {
+    const jobDoc = await getJobDocument(appwrite, id);
+    if (!token || token !== jobDoc.token) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+    if (isExpired(jobDoc.expiresAt)) {
+      await expireJob(appwrite, jobDoc);
+      return res.status(410).json({ error: 'Print link has expired' });
+    }
+    if (!jobDoc.fileId) {
+      return res.status(404).json({ error: 'Document content not available' });
+    }
+
+    const decryptedBuffer = await downloadAndDecryptJobFile(appwrite, jobDoc, id);
+    res.setHeader('Content-Type', jobDoc.mimeType || 'application/octet-stream');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${encodeURIComponent(jobDoc.documentName || jobDoc.filename || 'Document')}"`
+    );
+    res.setHeader('Content-Length', decryptedBuffer.length);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(decryptedBuffer);
+  } catch (error) {
+    if (error?.code === 404) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    console.error('Error fetching job content:', error);
+    return res.status(500).json({ error: 'Failed to fetch document content' });
+  }
+});
+
 router.post('/:id/view', async (req, res) => {
   if (!appwriteReady(req, res)) return;
   const appwrite = req.appwrite;
+  if (!storageReady(appwrite, res)) return;
   const { id } = req.params;
   const { token } = req.body || {};
 
@@ -458,9 +521,7 @@ router.post('/:id/view', async (req, res) => {
       });
     }
 
-    const encryptedPayload = await appwrite.storage.getFileDownload(appwrite.bucketId, jobDoc.fileId);
-    const encryptedBuffer = await toBuffer(encryptedPayload);
-    const decryptedBuffer = decryptDocumentForJob(encryptedBuffer, id);
+    const decryptedBuffer = await downloadAndDecryptJobFile(appwrite, jobDoc, id);
     const base64 = decryptedBuffer.toString('base64');
     const now = new Date().toISOString();
 
@@ -495,6 +556,7 @@ router.post('/:id/view', async (req, res) => {
 router.post('/:id/release', async (req, res) => {
   if (!appwriteReady(req, res)) return;
   const appwrite = req.appwrite;
+  if (!storageReady(appwrite, res)) return;
   const { id } = req.params;
   const { token, printerId, releasedBy } = req.body || {};
 
@@ -527,7 +589,6 @@ router.post('/:id/release', async (req, res) => {
       { status: 'released', releasedAt, printerId: printerId || null, releasedBy: releasedBy || null },
       { status: 'released' }
     );
-    await deleteFileSilently(appwrite, jobDoc.fileId);
 
     return res.json({
       success: true,
@@ -571,7 +632,9 @@ router.post('/:id/complete', async (req, res) => {
 });
 
 router.get('/', async (req, res) => {
-  if (!appwriteReady(req, res)) return;
+  if (!req.appwrite) {
+    return res.json({ jobs: [] });
+  }
   const appwrite = req.appwrite;
   const { userId } = req.query;
   let offset = 0;

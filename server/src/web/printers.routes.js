@@ -3,6 +3,11 @@ import { nanoid } from 'nanoid';
 import { appwriteQuery } from '../storage/appwrite.js';
 
 const router = Router();
+const staticPrinters = [
+  { id: 'printer1', name: 'Main Office Printer', location: 'Main Office', model: '', status: 'online', ip: '', capabilities: [], department: 'All' },
+  { id: 'printer2', name: 'Marketing Printer', location: 'Marketing', model: '', status: 'online', ip: '', capabilities: [], department: 'All' },
+  { id: 'printer3', name: 'IT Support Printer', location: 'IT Support', model: '', status: 'online', ip: '', capabilities: [], department: 'All' }
+];
 
 const appwriteReady = (req, res) => {
   if (!req.appwrite) {
@@ -52,14 +57,19 @@ const listAllPrinters = async (appwrite) => {
 };
 
 router.get('/', async (req, res) => {
-  if (!appwriteReady(req, res)) return;
+  if (!req.appwrite) {
+    return res.json({ printers: staticPrinters });
+  }
   const appwrite = req.appwrite;
   try {
     const printers = await listAllPrinters(appwrite);
+    if (printers.length === 0) {
+      return res.json({ printers: staticPrinters });
+    }
     return res.json({ printers: printers.map(parsePrinter) });
   } catch (error) {
     console.error('Error fetching printers from Appwrite:', error);
-    return res.status(500).json({ error: 'Failed to fetch printers' });
+    return res.json({ printers: staticPrinters });
   }
 });
 
@@ -145,4 +155,3 @@ router.delete('/:id', async (req, res) => {
 });
 
 export default router;
-

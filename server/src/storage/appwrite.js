@@ -6,8 +6,7 @@ const requiredEnv = [
   'APPWRITE_PROJECT_ID',
   'APPWRITE_API_KEY',
   'APPWRITE_DATABASE_ID',
-  'APPWRITE_COLLECTION_ID',
-  'APPWRITE_BUCKET_ID'
+  'APPWRITE_COLLECTION_ID'
 ];
 
 const getMissingEnv = () => requiredEnv.filter((key) => !process.env[key]);
@@ -28,7 +27,7 @@ export const createAppwriteServices = () => {
     storage: new Storage(client),
     databaseId: process.env.APPWRITE_DATABASE_ID,
     collectionId: process.env.APPWRITE_COLLECTION_ID,
-    bucketId: process.env.APPWRITE_BUCKET_ID,
+    bucketId: process.env.APPWRITE_BUCKET_ID || '',
     usersCollectionId: process.env.APPWRITE_USERS_COLLECTION_ID || 'users',
     printersCollectionId: process.env.APPWRITE_PRINTERS_COLLECTION_ID || 'printers',
     filesCollectionId: process.env.APPWRITE_FILES_COLLECTION_ID || 'encrypted_files'

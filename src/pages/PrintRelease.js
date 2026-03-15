@@ -3,6 +3,7 @@ import styled from 'styled-components';
 import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 import { usePrintJob } from '../context/PrintJobContext';
+import api from '../api/client';
 import { QRCodeCanvas } from 'qrcode.react';
 import { 
   FaQrcode, 
@@ -431,6 +432,28 @@ const PrintRelease = () => {
   const releasedInSession = React.useRef(false); // Track if already released in current session
   const [cachedDocument, setCachedDocument] = useState(null); // Cache document in browser memory
 
+  const fetchDocumentContent = async (jobId, token, fallbackMimeType, fallbackName) => {
+    if (!jobId || !token) return null;
+    const response = await api.get(`/api/jobs/${jobId}/content`, {
+      params: { token },
+      responseType: 'blob'
+    });
+    const blob = response?.data;
+    if (!blob || blob.size === 0) return null;
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('Failed to read document blob'));
+      reader.readAsDataURL(blob);
+    });
+    return {
+      dataUrl,
+      mimeType: blob.type || fallbackMimeType || 'application/octet-stream',
+      name: fallbackName || 'Document',
+      size: blob.size
+    };
+  };
+
   useEffect(() => {
     // Validate token and expiration (server-side or client-side)
     const jobId = params.jobId;
@@ -441,7 +464,6 @@ const PrintRelease = () => {
     // Try server API validation first (permanent fix)
     const validateFromServer = async () => {
       try {
-        const { api } = await import('../api/client');
         const response = await api.get(`/api/jobs/${jobId}?token=${token}`);
         if (response.data.job) {
           setServerJob(response.data.job);
@@ -449,6 +471,16 @@ const PrintRelease = () => {
           // Cache document in browser memory for multi-use
           if (response.data.job.document) {
             setCachedDocument(response.data.job.document);
+          } else {
+            const fetchedDocument = await fetchDocumentContent(
+              jobId,
+              token,
+              response.data.job.mimeType,
+              response.data.job.documentName
+            );
+            if (fetchedDocument) {
+              setCachedDocument(fetchedDocument);
+            }
           }
         }
       } catch (apiError) {
@@ -653,10 +685,22 @@ const PrintRelease = () => {
     // return () => clearTimeout(id);
 
     if (!documentData?.dataUrl && !printedViaIframe) {
-      console.warn('Document content not found, cannot auto-print.');
-      toast.error('Document content not available for printing. Please try downloading it instead.');
+      const token = new URLSearchParams(location.search).get('token');
+      fetchDocumentContent(jobId, token, serverJob?.mimeType, serverJob?.documentName)
+        .then((fetchedDocument) => {
+          if (fetchedDocument) {
+            setCachedDocument(fetchedDocument);
+            return;
+          }
+          console.warn('Document content not found, cannot auto-print.');
+          toast.error('Document content not available for printing. Please try downloading it instead.');
+        })
+        .catch(() => {
+          console.warn('Document content fetch failed, cannot auto-print.');
+          toast.error('Document content not available for printing. Please try downloading it instead.');
+        });
     }
-  }, [autoPrintDone, printedViaIframe, params.jobId, printJobs, serverJob, cachedDocument]);
+  }, [autoPrintDone, printedViaIframe, params.jobId, printJobs, serverJob, cachedDocument, location.search]);
 
   // Auto-authenticate and release if valid token and jobId are present
   // SECURITY: Multi-use design - can be called multiple times (page refresh)
