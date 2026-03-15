@@ -430,7 +430,13 @@ const PrintRelease = () => {
   // - Does NOT prevent multiple releases across page refreshes (by design)
   const releasingRef = React.useRef(false); // Prevent concurrent release attempts
   const releasedInSession = React.useRef(false); // Track if already released in current session
+  const autoReleaseAttemptedKey = React.useRef(null);
+  const releasePrintJobRef = React.useRef(releasePrintJob);
   const [cachedDocument, setCachedDocument] = useState(null); // Cache document in browser memory
+
+  useEffect(() => {
+    releasePrintJobRef.current = releasePrintJob;
+  }, [releasePrintJob]);
 
   const fetchDocumentContent = async (jobId, token, fallbackMimeType, fallbackName) => {
     if (!jobId || !token) return null;
@@ -711,9 +717,11 @@ const PrintRelease = () => {
     const jobId = params.jobId;
     const search = new URLSearchParams(location.search);
     const token = search.get('token');
+    const attemptKey = jobId && token ? `${jobId}:${token}` : null;
     
     // Skip if: no job/token, already releasing, or already released in this session
     if (!jobId || !token || releasingRef.current || releasedInSession.current) return;
+    if (autoReleaseAttemptedKey.current === attemptKey) return;
     
     // Use cached document or fetch from server/printJobs
     const documentData = cachedDocument || serverJob?.document;
@@ -731,12 +739,13 @@ const PrintRelease = () => {
     
     // Mark as releasing to prevent duplicate calls (React StrictMode)
     releasingRef.current = true;
+    autoReleaseAttemptedKey.current = attemptKey;
     setAuthenticatedUser(prev => prev || autoUser);
     setSelectedPrinter(printer);
     setLoading(true);
     
     // Release the job automatically
-    releasePrintJob(jobId, printer.id, autoUser.id, token)
+    releasePrintJobRef.current(jobId, printer.id, autoUser.id, token)
       .then(() => {
         // Success - mark as released in this session
         releasedInSession.current = true;
@@ -751,24 +760,17 @@ const PrintRelease = () => {
         }
       })
       .catch((err) => {
-        // Check if error is due to expiration (expected behavior)
         const errorMsg = err.message || 'Unknown error';
         if (errorMsg.includes('expired')) {
-          toast.info('This print link has expired', { autoClose: 5000 });
+          return;
         } else if (errorMsg.includes('already been used')) {
-          // Should not happen with multi-use backend, but handle gracefully
-          toast.info('This link was already used in another session. The link remains valid until expiration.', {
-            autoClose: 5000
-          });
-          releasedInSession.current = true; // Treat as success
-        } else {
-          toast.error('Failed to release print job: ' + errorMsg);
+          releasedInSession.current = true;
+          return;
         }
-        // Reset releasing flag on error so user can retry manually
         releasingRef.current = false;
       })
       .finally(() => setLoading(false));
-  }, [params.jobId, location.search, printJobs, printers, mockUsers, releasePrintJob, serverJob, cachedDocument, user]);
+  }, [params.jobId, location.search, printJobs, printers, mockUsers, serverJob, cachedDocument, user]);
 
   const userJobs = authenticatedUser 
     ? [

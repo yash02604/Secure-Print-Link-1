@@ -93,12 +93,24 @@ app.post('/upload', authMiddleware, upload.single('file'), async (req, res, next
 
     const allowedMimeTypes = new Set([
       'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'text/plain',
+      'text/csv',
       'image/jpeg',
-      'image/png'
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'image/bmp',
+      'image/svg+xml'
     ]);
 
     if (!allowedMimeTypes.has(req.file.mimetype)) {
-      return res.status(400).json({ error: 'Only PDF, JPG, and PNG files are allowed' });
+      return res.status(400).json({ error: 'Unsupported file type. Allowed: PDF, images, Word, Excel, PowerPoint, text.' });
     }
 
     const fileId = nanoid();

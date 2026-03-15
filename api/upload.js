@@ -4,6 +4,18 @@ import { createAppwriteServices, createFileInputFromBuffer, generateUniqueId } f
 
 const upload = multer({ storage: multer.memoryStorage() });
 const makeId = (size = 21) => crypto.randomBytes(Math.max(16, size)).toString('base64url').slice(0, size);
+const supportedUploadExtensions = new Set([
+  '.pdf', '.doc', '.docx', '.txt', '.rtf',
+  '.xls', '.xlsx', '.csv',
+  '.ppt', '.pptx',
+  '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg',
+  '.json', '.html', '.htm'
+]);
+const getExtension = (filename = '') => {
+  const lower = filename.toLowerCase();
+  const idx = lower.lastIndexOf('.');
+  return idx === -1 ? '' : lower.substring(idx);
+};
 
 const runUpload = (req, res) =>
   new Promise((resolve, reject) => {
@@ -40,6 +52,9 @@ export default async function handler(req, res) {
     if (!req.file) {
       return res.status(400).json({ error: 'File is required' });
     }
+    if (!supportedUploadExtensions.has(getExtension(req.file.originalname))) {
+      return res.status(400).json({ error: 'Unsupported file type. Allowed: PDF, images, Word, Excel, PowerPoint, text.' });
+    }
 
     const fileId = makeId(21);
     const fileKey = deriveFileKey(fileId);
@@ -49,11 +64,20 @@ export default async function handler(req, res) {
     const authTag = cipher.getAuthTag();
     const combinedEncrypted = Buffer.concat([iv, authTag, encryptedData]);
 
-    const storageFile = await appwrite.storage.createFile(
-      appwrite.bucketId,
-      generateUniqueId(),
-      createFileInputFromBuffer(combinedEncrypted, req.file.originalname)
-    );
+    let storageFile;
+    try {
+      storageFile = await appwrite.storage.createFile(
+        appwrite.bucketId,
+        generateUniqueId(),
+        createFileInputFromBuffer(combinedEncrypted, req.file.originalname)
+      );
+    } catch (storageError) {
+      const msg = String(storageError?.message || '');
+      if (/extension|mime|file type|invalid file/i.test(msg)) {
+        return res.status(400).json({ error: 'File type is blocked by Appwrite bucket settings. Allow this extension in Appwrite Storage bucket.' });
+      }
+      throw storageError;
+    }
 
     return res.status(200).json({
       success: true,

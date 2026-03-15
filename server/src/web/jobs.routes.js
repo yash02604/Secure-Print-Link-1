@@ -222,7 +222,11 @@ const deleteFileSilently = async (appwrite, fileId) => {
 
 const expireJob = async (appwrite, jobDoc) => {
   await deleteFileSilently(appwrite, jobDoc.fileId);
-  await updateJobDocument(appwrite, jobDoc.$id, { status: 'deleted' }, { status: 'deleted' });
+  await appwrite.databases.deleteDocument(
+    appwrite.databaseId,
+    appwrite.collectionId,
+    jobDoc.$id
+  );
 };
 
 const isExpired = (expiresAt) => {
@@ -240,12 +244,23 @@ const cleanupExpiredJobs = async () => {
       cleanupAppwrite.collectionId,
       [
         appwriteQuery.lessThanEqual('expiresAt', nowIso),
-        appwriteQuery.notEqual('status', 'deleted'),
         appwriteQuery.limit(100)
       ]
     );
 
     for (const doc of documents) {
+      await expireJob(cleanupAppwrite, doc);
+    }
+
+    const legacyDeleted = await cleanupAppwrite.databases.listDocuments(
+      cleanupAppwrite.databaseId,
+      cleanupAppwrite.collectionId,
+      [
+        appwriteQuery.equal('status', 'deleted'),
+        appwriteQuery.limit(100)
+      ]
+    );
+    for (const doc of legacyDeleted.documents) {
       await expireJob(cleanupAppwrite, doc);
     }
   } catch (error) {
@@ -403,7 +418,6 @@ router.get('/cleanup/expired', async (req, res) => {
       appwrite.collectionId,
       [
         appwriteQuery.lessThanEqual('expiresAt', nowIso),
-        appwriteQuery.notEqual('status', 'deleted'),
         appwriteQuery.limit(100)
       ]
     );
@@ -664,6 +678,7 @@ router.get('/', async (req, res) => {
 
     const mapped = jobs
       .map((doc) => parseJob(doc, req))
+      .filter((job) => job.status !== 'deleted')
       .filter((job) => !userId || !job.userId || String(job.userId) === String(userId))
       .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
 

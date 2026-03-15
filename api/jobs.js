@@ -9,6 +9,18 @@ import {
 
 const upload = multer({ storage: multer.memoryStorage() });
 const makeId = (size = 21) => crypto.randomBytes(Math.max(16, size)).toString('base64url').slice(0, size);
+const supportedUploadExtensions = new Set([
+  '.pdf', '.doc', '.docx', '.txt', '.rtf',
+  '.xls', '.xlsx', '.csv',
+  '.ppt', '.pptx',
+  '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg',
+  '.json', '.html', '.htm'
+]);
+const getExtension = (filename = '') => {
+  const lower = filename.toLowerCase();
+  const idx = lower.lastIndexOf('.');
+  return idx === -1 ? '' : lower.substring(idx);
+};
 
 const asBoolean = (value) => value === true || value === 1 || value === '1' || value === 'true';
 
@@ -109,6 +121,20 @@ const parseJob = (doc, req) => {
 };
 
 const isExpired = (expiresAt) => expiresAt ? Date.now() >= new Date(expiresAt).getTime() : false;
+const deleteFileSilently = async (appwrite, fileId) => {
+  if (!fileId || !appwrite.bucketId) return;
+  try {
+    await appwrite.storage.deleteFile(appwrite.bucketId, fileId);
+  } catch (error) {
+    if (error?.code !== 404) {
+      console.error('Failed to delete Appwrite file:', fileId, error);
+    }
+  }
+};
+const deleteJobPermanently = async (appwrite, jobDoc) => {
+  await deleteFileSilently(appwrite, jobDoc.fileId);
+  await appwrite.databases.deleteDocument(appwrite.databaseId, appwrite.collectionId, jobDoc.$id || jobDoc.jobId);
+};
 
 const getAppwrite = () => createAppwriteServices();
 
@@ -136,6 +162,7 @@ const listJobs = async (req, res, appwrite) => {
   }
   const mapped = jobs
     .map((doc) => parseJob(doc, req))
+    .filter((job) => job.status !== 'deleted')
     .filter((job) => !userId || !job.userId || String(job.userId) === String(userId))
     .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
   return res.status(200).json({ jobs: mapped });
@@ -147,6 +174,7 @@ const getJob = async (req, res, appwrite, id, token) => {
     return res.status(403).json({ error: 'Invalid token' });
   }
   if (isExpired(jobDoc.expiresAt)) {
+    await deleteJobPermanently(appwrite, jobDoc);
     return res.status(410).json({ error: 'Print link has expired' });
   }
   return res.status(200).json({ job: parseJob(jobDoc, req) });
@@ -158,6 +186,7 @@ const getJobContent = async (res, appwrite, id, token) => {
     return res.status(403).json({ error: 'Invalid token' });
   }
   if (isExpired(jobDoc.expiresAt)) {
+    await deleteJobPermanently(appwrite, jobDoc);
     return res.status(410).json({ error: 'Print link has expired' });
   }
   if (!jobDoc.fileId) {
@@ -182,6 +211,7 @@ const viewJob = async (res, appwrite, id, token) => {
     return res.status(403).json({ error: 'Invalid token' });
   }
   if (isExpired(jobDoc.expiresAt)) {
+    await deleteJobPermanently(appwrite, jobDoc);
     return res.status(410).json({ error: 'Print link has expired' });
   }
   if ((jobDoc.status || 'pending') !== 'pending') {
@@ -219,6 +249,9 @@ const createJob = async (req, res, appwrite) => {
   if (!userId || !documentName || !req.file) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
+  if (!supportedUploadExtensions.has(getExtension(req.file.originalname))) {
+    return res.status(400).json({ error: 'Unsupported file type. Allowed: PDF, images, Word, Excel, PowerPoint, text.' });
+  }
   if (!appwrite.bucketId) {
     return res.status(500).json({ error: 'Appwrite storage bucket is not configured on the server' });
   }
@@ -240,11 +273,20 @@ const createJob = async (req, res, appwrite) => {
   const cost = +(baseCost * pages * copies * (color ? 2 : 1) * (duplex ? 0.8 : 1)).toFixed(2);
 
   const encryptedContent = encryptDocumentForJob(req.file.buffer, jobId);
-  const uploadedFile = await appwrite.storage.createFile(
-    appwrite.bucketId,
-    generateUniqueId(),
-    createFileInputFromBuffer(encryptedContent, req.file.originalname)
-  );
+  let uploadedFile;
+  try {
+    uploadedFile = await appwrite.storage.createFile(
+      appwrite.bucketId,
+      generateUniqueId(),
+      createFileInputFromBuffer(encryptedContent, req.file.originalname)
+    );
+  } catch (storageError) {
+    const msg = String(storageError?.message || '');
+    if (/extension|mime|file type|invalid file/i.test(msg)) {
+      return res.status(400).json({ error: 'File type is blocked by Appwrite bucket settings. Allow this extension in Appwrite Storage bucket.' });
+    }
+    throw storageError;
+  }
 
   const payload = {
     jobId,
