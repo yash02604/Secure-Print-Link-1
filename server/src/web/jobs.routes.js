@@ -1,19 +1,17 @@
 import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import multer from 'multer';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import fs from 'fs';
 import crypto from 'crypto';
+import { appwriteQuery, createFileInputFromBuffer, generateUniqueId } from '../storage/appwrite.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const uploadsDir = join(__dirname, '../../uploads');
-const upload = multer({ dest: uploadsDir, limits: { fileSize: +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024) } });
+const upload = multer({
+  storage: multer.memoryStorage()
+});
 
 const router = Router();
+let cleanupAppwrite = null;
+let cleanupRunning = false;
 
-// Encryption helpers (AES-256-GCM with per-job keys)
 const getMasterKey = () => {
   const rawKey = process.env.ENCRYPTION_KEY || 'default-encryption-key-change-me';
   return crypto.createHash('sha256').update(rawKey).digest();
@@ -30,12 +28,10 @@ const encryptDocumentForJob = (buffer, jobId) => {
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   const encryptedData = Buffer.concat([cipher.update(buffer), cipher.final()]);
   const authTag = cipher.getAuthTag();
-  // Layout: [iv (12 bytes)] [authTag (16 bytes)] [ciphertext]
   return Buffer.concat([iv, authTag, encryptedData]);
 };
 
 const decryptDocumentForJob = (buffer, jobId) => {
-  // Backwards compatibility: if buffer is too small to contain iv + tag, treat as plaintext
   if (!buffer || buffer.length < 28) {
     return buffer;
   }
@@ -55,505 +51,555 @@ const decryptDocumentForJob = (buffer, jobId) => {
   }
 };
 
-// In-memory storage for expiration metadata (server memory - lost on restart by design)
-// SECURITY MODEL: Single-use view enforcement
-// - SUBMITTED → PENDING → (VIEW once) → RELEASED → DELETED
-// - View allowed only once per job
-// - After viewing, button permanently disabled
-// - Files deleted only on expiration or manual deletion
-const expirationMetadata = new Map(); // jobId -> { expiresAt, createdAt, token, viewCount, firstViewedAt }
-const activeOperations = new Set(); // Track jobIds being processed to prevent cleanup interference
-let dbInstance = null;
+const getOrigin = (req) => {
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+  const computedOrigin = `${protocol}://${host}`;
+  return process.env.PUBLIC_BASE_URL || req.headers.origin || computedOrigin;
+};
 
-// Cleanup loop: Periodically scan for expired jobs and clean up
-setInterval(() => {
-  const currentServerTime = Date.now();
-  const expiredJobIds = [];
-  
-  expirationMetadata.forEach((metadata, jobId) => {
-    // SECURITY: Only clean up if job is not currently being operated on
-    if (currentServerTime >= metadata.expiresAt && !activeOperations.has(jobId)) {
-      expiredJobIds.push(jobId);
-    }
-  });
-  
-  // Clean up expired jobs
-  if (expiredJobIds.length > 0) {
-    console.log(`[Cleanup] Removing ${expiredJobIds.length} expired print job(s)`);
-    expiredJobIds.forEach(jobId => {
-      const metadata = expirationMetadata.get(jobId);
-      expirationMetadata.delete(jobId);
-      
-      // Delete file from filesystem
-      if (metadata?.filePath) {
-        try {
-          if (fs.existsSync(metadata.filePath)) {
-            fs.unlinkSync(metadata.filePath);
-            console.log(`[Cleanup] Deleted expired file: ${metadata.filePath}`);
-          }
-        } catch (err) {
-          console.error(`[Cleanup] Error deleting expired file ${metadata.filePath}:`, err);
-        }
-      }
+const asBoolean = (value) => value === true || value === 1 || value === '1' || value === 'true';
 
-      // Delete from DB (will cascade to documents and analysis)
-      if (dbInstance) {
-        try {
-          dbInstance.prepare('UPDATE jobs SET status = ?, deletedAt = ? WHERE id = ?')
-            .run('deleted', new Date().toISOString(), jobId);
-          console.log(`[Cleanup] Marked job as deleted in DB: ${jobId}`);
-        } catch (err) {
-          console.error(`[Cleanup] Error updating job in DB ${jobId}:`, err);
-        }
-      }
-    });
+const extractErrorMessage = (error) => String(error?.message || error?.response || error || '');
+
+const isUnknownAttributeError = (error) =>
+  /unknown attribute|invalid document structure|attribute not found/i.test(extractErrorMessage(error));
+
+const toBuffer = async (input) => {
+  if (Buffer.isBuffer(input)) return input;
+  if (input instanceof ArrayBuffer) return Buffer.from(input);
+  if (ArrayBuffer.isView(input)) return Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+  if (input && typeof input.arrayBuffer === 'function') {
+    const arrayBuffer = await input.arrayBuffer();
+    return Buffer.from(arrayBuffer);
   }
-}, 60000); // Run every minute
+  if (input && typeof input.on === 'function') {
+    const chunks = [];
+    for await (const chunk of input) {
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
+  throw new Error('Unsupported Appwrite file payload');
+};
 
-// Create job (multipart/form-data supported)
+const appwriteReady = (req, res) => {
+  if (!req.appwrite) {
+    res.status(500).json({ error: 'Appwrite is not configured on the server' });
+    return false;
+  }
+  return true;
+};
+
+const parseJob = (doc, req) => {
+  const jobId = doc.jobId || doc.$id;
+  const token = doc.token;
+  const releaseLink =
+    doc.releaseLink || `${getOrigin(req).replace(/\/$/, '')}/release/${jobId}?token=${token}`;
+  const status = doc.status || 'pending';
+  const viewCount =
+    typeof doc.viewCount === 'number' ? doc.viewCount : (status === 'pending' ? 0 : 1);
+
+  return {
+    id: jobId,
+    userId: doc.userId || '',
+    userName: doc.userName || '',
+    documentName: doc.documentName || doc.filename || 'Document',
+    pages: Number(doc.pages || 1),
+    copies: Number(doc.copies || 1),
+    color: asBoolean(doc.color),
+    duplex: asBoolean(doc.duplex),
+    stapling: asBoolean(doc.stapling),
+    priority: doc.priority || 'normal',
+    notes: doc.notes || '',
+    status,
+    cost: Number(doc.cost || 0),
+    submittedAt: doc.submittedAt || doc.createdAt,
+    secureToken: token,
+    releaseLink,
+    expiresAt: doc.expiresAt,
+    viewCount,
+    firstViewedAt: doc.firstViewedAt || null,
+    lastViewedAt: doc.lastViewedAt || null,
+    releasedAt: doc.releasedAt || null,
+    completedAt: doc.completedAt || null,
+    printerId: doc.printerId || null,
+    releasedBy: doc.releasedBy || null,
+    fileId: doc.fileId || null,
+    mimeType: doc.mimeType || 'application/octet-stream'
+  };
+};
+
+const getJobDocument = async (appwrite, jobId) => {
+  return appwrite.databases.getDocument(appwrite.databaseId, appwrite.collectionId, jobId);
+};
+
+const updateJobDocument = async (appwrite, jobId, data, fallbackData = null) => {
+  try {
+    return await appwrite.databases.updateDocument(
+      appwrite.databaseId,
+      appwrite.collectionId,
+      jobId,
+      data
+    );
+  } catch (error) {
+    if (fallbackData && isUnknownAttributeError(error)) {
+      return appwrite.databases.updateDocument(
+        appwrite.databaseId,
+        appwrite.collectionId,
+        jobId,
+        fallbackData
+      );
+    }
+    throw error;
+  }
+};
+
+const createJobDocument = async (appwrite, jobId, fullData, minimalData) => {
+  try {
+    return await appwrite.databases.createDocument(
+      appwrite.databaseId,
+      appwrite.collectionId,
+      jobId,
+      fullData
+    );
+  } catch (error) {
+    if (isUnknownAttributeError(error)) {
+      return appwrite.databases.createDocument(
+        appwrite.databaseId,
+        appwrite.collectionId,
+        jobId,
+        minimalData
+      );
+    }
+    throw error;
+  }
+};
+
+const deleteFileSilently = async (appwrite, fileId) => {
+  if (!fileId) return;
+  try {
+    await appwrite.storage.deleteFile(appwrite.bucketId, fileId);
+  } catch (error) {
+    if (error?.code !== 404) {
+      console.error('Failed to delete Appwrite file:', fileId, error);
+    }
+  }
+};
+
+const expireJob = async (appwrite, jobDoc) => {
+  await deleteFileSilently(appwrite, jobDoc.fileId);
+  await updateJobDocument(appwrite, jobDoc.$id, { status: 'deleted' }, { status: 'deleted' });
+};
+
+const isExpired = (expiresAt) => {
+  if (!expiresAt) return false;
+  return Date.now() >= new Date(expiresAt).getTime();
+};
+
+const cleanupExpiredJobs = async () => {
+  if (!cleanupAppwrite || cleanupRunning) return;
+  cleanupRunning = true;
+  try {
+    const nowIso = new Date().toISOString();
+    const { documents } = await cleanupAppwrite.databases.listDocuments(
+      cleanupAppwrite.databaseId,
+      cleanupAppwrite.collectionId,
+      [
+        appwriteQuery.lessThanEqual('expiresAt', nowIso),
+        appwriteQuery.notEqual('status', 'deleted'),
+        appwriteQuery.limit(100)
+      ]
+    );
+
+    for (const doc of documents) {
+      await expireJob(cleanupAppwrite, doc);
+    }
+  } catch (error) {
+    console.error('Expired job cleanup failed:', error);
+  } finally {
+    cleanupRunning = false;
+  }
+};
+
+setInterval(() => {
+  cleanupExpiredJobs();
+}, 60000);
+
+router.use((req, res, next) => {
+  if (req.appwrite && !cleanupAppwrite) {
+    cleanupAppwrite = req.appwrite;
+  }
+  next();
+});
+
 router.post('/', (req, res, next) => {
   upload.single('file')(req, res, (err) => {
     if (err instanceof multer.MulterError) {
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'File size exceeds limit (max 20MB)' });
-      }
       return res.status(400).json({ error: err.message });
-    } else if (err) {
+    }
+    if (err) {
       return res.status(500).json({ error: 'Upload failed' });
     }
-    next();
+    return next();
   });
-}, (req, res) => {
-  const db = req.db;
-  dbInstance = db; // Capture db instance for cleanup loop
+}, async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+
+  const appwrite = req.appwrite;
   const body = req.body || {};
   const userId = body.userId;
   const userName = body.userName;
-  const documentName = body.documentName || (req.file?.originalname || 'Document');
-  
-  if (!userId || !documentName) return res.status(400).json({ error: 'Missing required fields' });
+  const documentName = body.documentName || req.file?.originalname || 'Document';
+  const jobId = nanoid();
+  const secureToken = nanoid(32);
 
-  const id = nanoid();
-  activeOperations.add(id); // Lock job during creation
+  if (!userId || !documentName || !req.file) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
 
+  const expirationDuration = parseInt(body.expirationDuration || 15, 10);
+  const expiresAt = new Date(Date.now() + expirationDuration * 60 * 1000).toISOString();
+  const submittedAt = new Date().toISOString();
+  const createdAt = submittedAt;
+  const origin = getOrigin(req);
+  const releaseLink = `${origin.replace(/\/$/, '')}/release/${jobId}?token=${secureToken}`;
+  const pages = +(body.pages ?? 1);
+  const copies = +(body.copies ?? 1);
+  const color = body.color === 'true' || body.color === true;
+  const duplex = body.duplex === 'true' || body.duplex === true;
+  const stapling = body.stapling === 'true' || body.stapling === true;
+  const priority = body.priority || 'normal';
+  const notes = body.notes || '';
+
+  const baseCost = 0.1;
+  const colorMultiplier = color ? 2 : 1;
+  const duplexMultiplier = duplex ? 0.8 : 1;
+  const cost = +(baseCost * pages * copies * colorMultiplier * duplexMultiplier).toFixed(2);
+
+  let uploadedFile = null;
   try {
-    const secureToken = nanoid(32);
-    
-    // Calculate expiration time (server time) - ATOMIC: Done AFTER upload complete
-    const expirationDuration = parseInt(body.expirationDuration || 15); // minutes, default 15
-    const currentServerTime = Date.now();
-    const expiresAt = currentServerTime + (expirationDuration * 60 * 1000); // Convert minutes to milliseconds
-    
-    const pages = +(body.pages ?? 1);
-    const copies = +(body.copies ?? 1);
-    const color = body.color === 'true' || body.color === true;
-    const duplex = body.duplex === 'true' || body.duplex === true;
-    const stapling = body.stapling === 'true' || body.stapling === true;
-    const priority = body.priority || 'normal';
-    const notes = body.notes || '';
+    const encryptedContent = encryptDocumentForJob(req.file.buffer, jobId);
+    uploadedFile = await appwrite.storage.createFile(
+      appwrite.bucketId,
+      generateUniqueId(),
+      createFileInputFromBuffer(encryptedContent, req.file.originalname)
+    );
 
-    // Store expiration metadata in server memory
-    expirationMetadata.set(id, {
-      expiresAt,
-      createdAt: currentServerTime,
+    const minimalJobData = {
+      jobId,
       token: secureToken,
+      fileId: uploadedFile.$id,
+      mimeType: req.file.mimetype,
+      expiresAt,
+      status: 'pending',
+      createdAt
+    };
+
+    const fullJobData = {
+      ...minimalJobData,
+      userId,
+      userName: userName || '',
+      documentName,
+      pages,
+      copies,
+      color,
+      duplex,
+      stapling,
+      priority,
+      notes,
+      cost,
+      submittedAt,
+      releaseLink,
       viewCount: 0,
       firstViewedAt: null,
-      filePath: null,
-      mimetype: req.file?.mimetype,
-      originalname: req.file?.originalname
-    });
-    
-    // Prefer explicit public base URL if provided (useful behind tunnels/proxies)
-    const host = req.headers['x-forwarded-host'] || req.headers.host;
-    const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
-    const computedOrigin = `${protocol}://${host}`;
-    const origin = process.env.PUBLIC_BASE_URL || req.headers.origin || computedOrigin;
-    const releaseLink = `${origin.replace(/\/$/, '')}/release/${id}?token=${secureToken}`;
+      lastViewedAt: null,
+      filename: req.file.originalname,
+      size: req.file.size
+    };
 
-    const baseCost = 0.10;
-    const colorMultiplier = color ? 2 : 1;
-    const duplexMultiplier = duplex ? 0.8 : 1;
-    const cost = +(baseCost * pages * copies * colorMultiplier * duplexMultiplier).toFixed(2);
+    await createJobDocument(appwrite, jobId, fullJobData, minimalJobData);
 
-    const stmt = db.prepare(`INSERT INTO jobs (
-      id, userId, documentName, pages, copies, color, duplex, stapling, priority, notes,
-      status, cost, submittedAt, secureToken, releaseLink, expiresAt, viewCount
-    ) VALUES (@id, @userId, @documentName, @pages, @copies, @color, @duplex, @stapling, @priority, @notes,
-      'pending', @cost, @submittedAt, @secureToken, @releaseLink, @expiresAt, 0)`);
-
-    stmt.run({
-      id, userId, documentName, pages, copies,
-      color: color ? 1 : 0, duplex: duplex ? 1 : 0, stapling: stapling ? 1 : 0,
-      priority, notes, cost,
-      submittedAt: new Date().toISOString(),
-      secureToken, releaseLink,
-      expiresAt: new Date(expiresAt).toISOString()
-    });
-
-    // Store encrypted document in DB and run analysis (length-based, no plaintext at rest)
-    if (req.file) {
-      const documentId = nanoid();
-      const fileContent = fs.readFileSync(req.file.path);
-
-      // Encrypt the document content using per-job key
-      const encryptedContent = encryptDocumentForJob(fileContent, id);
-      
-      db.prepare(`INSERT INTO documents (
-        id, jobId, content, mimeType, filename, size, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        documentId, id, encryptedContent, req.file.mimetype, req.file.originalname, req.file.size, new Date().toISOString()
-      );
-
-      // Mock Document Analysis (estimated from original file size only, no plaintext stored)
-      const analysisId = nanoid();
-      const analysisResult = {
-        wordCount: Math.floor(fileContent.length / 6),
-        processedAt: new Date().toISOString(),
-        status: 'completed',
-        features: ['text-extraction', 'metadata-analysis']
-      };
-      
-      db.prepare(`INSERT INTO document_analysis (
-        id, documentId, analysisType, result, status, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?)`).run(
-        analysisId, documentId, 'basic_metrics', JSON.stringify(analysisResult), 'completed', new Date().toISOString()
-      );
-
-      // Delete uploaded plaintext file from disk as soon as we've processed it
-      try {
-        if (fs.existsSync(req.file.path)) {
-          fs.unlinkSync(req.file.path);
-        }
-      } catch (err) {
-        console.error('Error deleting temporary upload file:', err);
-      }
-    }
-
-    res.json({
+    return res.json({
       success: true,
-      job: { 
-        id, userId, documentName, pages, copies, color, duplex, stapling, priority, notes, 
-        status: 'pending', cost, submittedAt: new Date().toISOString(), 
-        secureToken, releaseLink, expiresAt: new Date(expiresAt).toISOString(), expirationDuration,
-        file: req.file ? { filename: req.file.filename, originalname: req.file.originalname, mimetype: req.file.mimetype, size: req.file.size } : null 
+      job: {
+        id: jobId,
+        userId,
+        userName: userName || '',
+        documentName,
+        pages,
+        copies,
+        color,
+        duplex,
+        stapling,
+        priority,
+        notes,
+        status: 'pending',
+        cost,
+        submittedAt,
+        secureToken,
+        releaseLink,
+        expiresAt,
+        expirationDuration,
+        file: {
+          filename: uploadedFile.$id,
+          originalname: req.file.originalname,
+          mimetype: req.file.mimetype,
+          size: req.file.size
+        }
       }
     });
-  } catch (err) {
-    console.error('Error during job submission:', err);
-    res.status(500).json({ error: 'Failed to process print job' });
-  } finally {
-    activeOperations.delete(id);
+  } catch (error) {
+    console.error('Error during Appwrite job submission:', error);
+    if (uploadedFile?.$id) {
+      await deleteFileSilently(appwrite, uploadedFile.$id);
+    }
+    return res.status(500).json({ error: 'Failed to process print job' });
   }
 });
 
-// Get job by id + token (with single-view enforcement)
-router.get('/:id', (req, res) => {
-  const db = req.db;
+router.get('/cleanup/expired', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
+  const nowIso = new Date().toISOString();
+
+  try {
+    const { documents } = await appwrite.databases.listDocuments(
+      appwrite.databaseId,
+      appwrite.collectionId,
+      [
+        appwriteQuery.lessThanEqual('expiresAt', nowIso),
+        appwriteQuery.notEqual('status', 'deleted'),
+        appwriteQuery.limit(100)
+      ]
+    );
+
+    const expired = documents.map((doc) => ({
+      id: doc.jobId || doc.$id,
+      expiredAt: doc.expiresAt,
+      originalToken: `${String(doc.token || '').slice(0, 8)}...`
+    }));
+    return res.json({ expired });
+  } catch (error) {
+    console.error('Failed to list expired jobs:', error);
+    return res.status(500).json({ error: 'Failed to fetch expired jobs' });
+  }
+});
+
+router.get('/:id', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
   const { id } = req.params;
   const { token } = req.query;
-  
-  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
-  
-  // Validate token
-  if (token && token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
 
-  // Validate expiration
-  const currentServerTime = Date.now();
-  const expiresAt = new Date(job.expiresAt).getTime();
-  if (currentServerTime >= expiresAt) {
-    // If it's in memory, clean it up
-    if (expirationMetadata.has(id)) {
-      expirationMetadata.delete(id);
-    }
-    return res.status(410).json({ error: 'Print link has expired' });
-  }
-
-  // Check if job has been viewed already (single-view enforcement)
-  if (job.viewCount > 0) {
-    return res.status(403).json({ 
-      error: 'Document already viewed (one-time only)',
-      alreadyViewed: true,
-      viewCount: job.viewCount
-    });
-  }
-
-  // Fetch document metadata and analysis from DB
   try {
-    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
-    if (document) {
-      // Decrypt content in memory for preview (document is stored encrypted at rest)
-      const decryptedBuffer = decryptDocumentForJob(document.content, id);
-      const base64 = decryptedBuffer.toString('base64');
-      job.document = {
-        dataUrl: `data:${document.mimeType};base64,${base64}`,
-        mimeType: document.mimeType,
-        name: document.filename,
-        size: document.size
-      };
-      
-      // Fetch analysis
-      const analysis = db.prepare('SELECT * FROM document_analysis WHERE documentId = ?').get(document.id);
-      if (analysis) {
-        job.analysis = JSON.parse(analysis.result);
-      }
-    } else {
-      // Check if it's in memory (older jobs or newly submitted)
-      const metadata = expirationMetadata.get(id);
-      if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
-        try {
-          const fileBuffer = fs.readFileSync(metadata.filePath);
-          const base64 = fileBuffer.toString('base64');
-          const dataUrl = `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`;
-          
-          job.document = {
-            dataUrl,
-            mimeType: metadata.mimetype,
-            name: metadata.originalname || job.documentName
-          };
-        } catch (err) {
-          console.error('Error reading file for job:', id, err);
-        }
-      }
+    const jobDoc = await getJobDocument(appwrite, id);
+    if (!token || token !== jobDoc.token) {
+      return res.status(403).json({ error: 'Invalid token' });
     }
-  } catch (err) {
-    console.error('Error fetching document/analysis from DB:', err);
-  }
 
-  res.json({ job });
-});
-
-// View job document (single-use only)
-router.post('/:id/view', (req, res) => {
-  const db = req.db;
-  const { id } = req.params;
-  const { token, userId } = req.body || {};
-  
-  activeOperations.add(id); // Lock job during view confirmation
-  
-  try {
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    
-    // Validate token
-    if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
-    
-    // Validate expiration
-    const currentServerTime = Date.now();
-    const expiresAt = new Date(job.expiresAt).getTime();
-    if (currentServerTime >= expiresAt) {
-      if (expirationMetadata.has(id)) {
-        expirationMetadata.delete(id);
-      }
+    if (isExpired(jobDoc.expiresAt)) {
+      await expireJob(appwrite, jobDoc);
       return res.status(410).json({ error: 'Print link has expired' });
     }
-    
-    // SINGLE-USE ENFORCEMENT: Check if already viewed
-    if (job.viewCount > 0) {
-      return res.status(403).json({ 
+
+    if ((jobDoc.status || 'pending') !== 'pending') {
+      return res.status(403).json({
         error: 'Document already viewed (one-time only)',
         alreadyViewed: true,
-        viewCount: job.viewCount
+        viewCount: 1
       });
     }
 
-    // Record the view
+    const encryptedPayload = await appwrite.storage.getFileDownload(appwrite.bucketId, jobDoc.fileId);
+    const encryptedBuffer = await toBuffer(encryptedPayload);
+    const decryptedBuffer = decryptDocumentForJob(encryptedBuffer, id);
+    const base64 = decryptedBuffer.toString('base64');
+    const job = parseJob(jobDoc, req);
+    job.document = {
+      dataUrl: `data:${jobDoc.mimeType};base64,${base64}`,
+      mimeType: jobDoc.mimeType,
+      name: jobDoc.documentName || jobDoc.filename || 'Document',
+      size: Number(jobDoc.size || decryptedBuffer.length)
+    };
+
+    return res.json({ job });
+  } catch (error) {
+    if (error?.code === 404) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    console.error('Error fetching Appwrite job:', error);
+    return res.status(500).json({ error: 'Failed to fetch print job' });
+  }
+});
+
+router.post('/:id/view', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
+  const { id } = req.params;
+  const { token } = req.body || {};
+
+  try {
+    const jobDoc = await getJobDocument(appwrite, id);
+    if (!token || token !== jobDoc.token) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    if (isExpired(jobDoc.expiresAt)) {
+      await expireJob(appwrite, jobDoc);
+      return res.status(410).json({ error: 'Print link has expired' });
+    }
+
+    if ((jobDoc.status || 'pending') !== 'pending') {
+      return res.status(403).json({
+        error: 'Document already viewed (one-time only)',
+        alreadyViewed: true,
+        viewCount: 1
+      });
+    }
+
+    const encryptedPayload = await appwrite.storage.getFileDownload(appwrite.bucketId, jobDoc.fileId);
+    const encryptedBuffer = await toBuffer(encryptedPayload);
+    const decryptedBuffer = decryptDocumentForJob(encryptedBuffer, id);
+    const base64 = decryptedBuffer.toString('base64');
     const now = new Date().toISOString();
-    const viewId = nanoid();
-    
-    // Update job view count and timestamps
-    db.prepare('UPDATE jobs SET viewCount = viewCount + 1, firstViewedAt = ?, lastViewedAt = ? WHERE id = ?')
-      .run(now, now, id);
-    
-    // Log the view for audit trail
-    db.prepare(`INSERT INTO job_views (id, jobId, userId, viewedAt, userAgent, ipAddress) 
-      VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(
-        viewId, 
-        id, 
-        userId || 'anonymous', 
-        now, 
-        req.headers['user-agent'] || '', 
-        req.ip || req.connection.remoteAddress || ''
-      );
 
-    // Update in-memory metadata if present
-    const metadata = expirationMetadata.get(id);
-    if (metadata) {
-      metadata.viewCount = 1;
-      metadata.firstViewedAt = now;
-      expirationMetadata.set(id, metadata);
-    }
+    await updateJobDocument(
+      appwrite,
+      id,
+      { status: 'viewed', viewCount: 1, firstViewedAt: now, lastViewedAt: now },
+      { status: 'viewed' }
+    );
 
-    // Return document data for preview (NOT download)
-    let documentData = null;
-    const document = db.prepare('SELECT * FROM documents WHERE jobId = ?').get(id);
-    if (document) {
-      // Decrypt content in memory for preview, document is stored encrypted at rest
-      const decryptedBuffer = decryptDocumentForJob(document.content, id);
-      const base64 = decryptedBuffer.toString('base64');
-      documentData = {
-        dataUrl: `data:${document.mimeType};base64,${base64}`,
-        mimeType: document.mimeType,
-        name: document.filename,
-        size: document.size
-      };
-    } else if (metadata?.filePath && fs.existsSync(metadata.filePath)) {
-      const fileBuffer = fs.readFileSync(metadata.filePath);
-      const base64 = fileBuffer.toString('base64');
-      documentData = {
-        dataUrl: `data:${metadata.mimetype || 'application/octet-stream'};base64,${base64}`,
-        mimeType: metadata.mimetype,
-        name: metadata.originalname || job.documentName
-      };
-    }
-
-    res.json({ 
-      success: true, 
-      document: documentData,
+    return res.json({
+      success: true,
+      document: {
+        dataUrl: `data:${jobDoc.mimeType};base64,${base64}`,
+        mimeType: jobDoc.mimeType,
+        name: jobDoc.documentName || jobDoc.filename || 'Document',
+        size: Number(jobDoc.size || decryptedBuffer.length)
+      },
       viewCount: 1,
       firstViewedAt: now,
       message: 'Document preview opened. This was a one-time view - the button is now permanently disabled.'
     });
-  } catch (err) {
-    console.error('Error during job view:', err);
-    res.status(500).json({ error: 'Failed to open document preview' });
-  } finally {
-    activeOperations.delete(id);
+  } catch (error) {
+    if (error?.code === 404) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    console.error('Error during Appwrite job view:', error);
+    return res.status(500).json({ error: 'Failed to open document preview' });
   }
 });
 
-// Release job (requires token) - only possible AFTER viewing
-router.post('/:id/release', (req, res) => {
-  const db = req.db;
+router.post('/:id/release', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
   const { id } = req.params;
   const { token, printerId, releasedBy } = req.body || {};
-  
-  activeOperations.add(id); // Lock job during release operation
-  
+
   try {
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    
-    // Validate token
-    if (!token || token !== job.secureToken) return res.status(403).json({ error: 'Invalid token' });
-    
-    // Validate expiration
-    const currentServerTime = Date.now();
-    const expiresAt = new Date(job.expiresAt).getTime();
-    if (currentServerTime >= expiresAt) {
-      if (expirationMetadata.has(id)) {
-        expirationMetadata.delete(id);
-      }
+    const jobDoc = await getJobDocument(appwrite, id);
+    if (!token || token !== jobDoc.token) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    if (isExpired(jobDoc.expiresAt)) {
+      await expireJob(appwrite, jobDoc);
       return res.status(410).json({ error: 'Print link has expired' });
     }
-    
-    // REJECTION: Already released jobs
-    if (job.status === 'released') {
+
+    if (jobDoc.status === 'released') {
       return res.status(409).json({ error: 'Print job has already been released' });
     }
-    
-    // Check if job has been viewed (single-use view must occur before release)
-    if (job.viewCount === 0) {
-      return res.status(403).json({ 
+
+    if ((jobDoc.status || 'pending') === 'pending') {
+      return res.status(403).json({
         error: 'Document must be viewed before releasing. Click the view button first.',
         requiresView: true
       });
     }
 
-    // Update job status to released and track release metadata
-    db.prepare('UPDATE jobs SET status = ?, releasedAt = ?, printerId = ?, releasedBy = ? WHERE id = ?')
-      .run('released', new Date().toISOString(), printerId || null, releasedBy || null, id);
+    const releasedAt = new Date().toISOString();
+    await updateJobDocument(
+      appwrite,
+      id,
+      { status: 'released', releasedAt, printerId: printerId || null, releasedBy: releasedBy || null },
+      { status: 'released' }
+    );
+    await deleteFileSilently(appwrite, jobDoc.fileId);
 
-    // SECURITY: Clear document data from DB on release
-    try {
-      db.prepare('DELETE FROM documents WHERE jobId = ?').run(id);
-      console.log(`[Release] Cleared document data for job ${id}`);
-    } catch (docErr) {
-      console.error(`[Release] Error clearing document data for job ${id}:`, docErr);
-    }
-
-    console.log(`[Release] Job ${id} released for printing on printer ${printerId} by user ${releasedBy}`);
-
-    // Update in-memory metadata if present
-    const metadata = expirationMetadata.get(id);
-    if (metadata) {
-      expirationMetadata.set(id, {
-        ...metadata,
-        status: 'released'
-      });
-    }
-
-    res.json({ 
-      success: true, 
+    return res.json({
+      success: true,
       message: 'Print job released successfully!',
       status: 'released'
     });
-  } catch (err) {
-    console.error('Error during job release:', err);
-    res.status(500).json({ error: 'Failed to release print job' });
-  } finally {
-    activeOperations.delete(id);
-  }
-});
-
-// Complete job (mark as completed)
-router.post('/:id/complete', (req, res) => {
-  const db = req.db;
-  const { id } = req.params;
-  
-  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
-  
-  // Can only complete released jobs
-  if (job.status !== 'released') {
-    return res.status(400).json({ error: 'Job must be released before marking as completed' });
-  }
-  
-  db.prepare('UPDATE jobs SET status = ?, completedAt = ? WHERE id = ?')
-    .run('completed', new Date().toISOString(), id);
-
-  console.log(`[Complete] Job ${id} marked as completed`);
-  
-  res.json({ success: true, message: 'Job marked as completed' });
-});
-
-// Get all jobs (admin or filtered by user)
-router.get('/', (req, res) => {
-  const db = req.db;
-  const { userId } = req.query;
-  
-  let query = 'SELECT * FROM jobs';
-  let params = [];
-  
-  if (userId) {
-    query += ' WHERE userId = ?';
-    params.push(userId);
-  }
-  
-  query += ' ORDER BY submittedAt DESC';
-  
-  const jobs = db.prepare(query).all(params);
-  res.json({ jobs });
-});
-
-// Get expired jobs for cleanup verification
-router.get('/cleanup/expired', (req, res) => {
-  const currentServerTime = Date.now();
-  const expired = [];
-  
-  expirationMetadata.forEach((metadata, jobId) => {
-    if (currentServerTime >= metadata.expiresAt) {
-      expired.push({
-        id: jobId,
-        expiredAt: metadata.expiresAt,
-        originalToken: metadata.token.substring(0, 8) + '...' 
-      });
+  } catch (error) {
+    if (error?.code === 404) {
+      return res.status(404).json({ error: 'Job not found' });
     }
-  });
-  
-  res.json({ expired });
+    console.error('Error during Appwrite job release:', error);
+    return res.status(500).json({ error: 'Failed to release print job' });
+  }
+});
+
+router.post('/:id/complete', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
+  const { id } = req.params;
+
+  try {
+    const jobDoc = await getJobDocument(appwrite, id);
+    if (jobDoc.status !== 'released') {
+      return res.status(400).json({ error: 'Job must be released before marking as completed' });
+    }
+
+    await updateJobDocument(
+      appwrite,
+      id,
+      { status: 'completed', completedAt: new Date().toISOString() },
+      { status: 'completed' }
+    );
+    return res.json({ success: true, message: 'Job marked as completed' });
+  } catch (error) {
+    if (error?.code === 404) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    console.error('Error completing Appwrite job:', error);
+    return res.status(500).json({ error: 'Failed to complete print job' });
+  }
+});
+
+router.get('/', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
+  const { userId } = req.query;
+  let offset = 0;
+  const jobs = [];
+
+  try {
+    while (true) {
+      const { documents, total } = await appwrite.databases.listDocuments(
+        appwrite.databaseId,
+        appwrite.collectionId,
+        [appwriteQuery.limit(100), appwriteQuery.offset(offset)]
+      );
+
+      jobs.push(...documents);
+      offset += documents.length;
+      if (jobs.length >= total || documents.length === 0) break;
+    }
+
+    const mapped = jobs
+      .map((doc) => parseJob(doc, req))
+      .filter((job) => !userId || !job.userId || String(job.userId) === String(userId))
+      .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
+
+    return res.json({ jobs: mapped });
+  } catch (error) {
+    console.error('Error listing Appwrite jobs:', error);
+    return res.status(500).json({ error: 'Failed to fetch jobs' });
+  }
 });
 
 export default router;

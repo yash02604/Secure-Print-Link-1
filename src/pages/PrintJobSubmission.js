@@ -528,41 +528,9 @@ const PrintJobSubmission = () => {
   // Now do your early returns
   if (apiError) {
     return (
-      <div style={{ padding: 32, textAlign: 'center' }}>
-        <h2 style={{ color: '#e74c3c', marginBottom: '16px' }}>Something went wrong.</h2>
-        <div style={{ 
-          background: '#f8f9fa', 
-          padding: '20px', 
-          borderRadius: '8px', 
-          border: '1px solid #dee2e6',
-          maxWidth: '600px',
-          margin: '0 auto',
-          textAlign: 'left'
-        }}>
-          <p style={{ color: '#c0392b', fontWeight: 'bold', marginBottom: '8px' }}>Error Details:</p>
-          <pre style={{ 
-            whiteSpace: 'pre-wrap', 
-            wordBreak: 'break-all',
-            fontSize: '14px',
-            color: '#2c3e50'
-          }}>
-            {typeof apiError === 'object' ? JSON.stringify(apiError, null, 2) : apiError.toString()}
-          </pre>
-        </div>
-        <button 
-          onClick={() => setApiError(null)}
-          style={{
-            marginTop: '24px',
-            padding: '10px 20px',
-            background: '#3498db',
-            color: 'white',
-            border: 'none',
-            borderRadius: '6px',
-            cursor: 'pointer'
-          }}
-        >
-          Try Again
-        </button>
+      <div style={{ color: 'red', padding: 32, textAlign: 'center' }}>
+        <h2>Something went wrong.</h2>
+        <pre>{apiError.toString()}</pre>
       </div>
     );
   }

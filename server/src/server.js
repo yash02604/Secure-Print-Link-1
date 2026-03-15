@@ -7,6 +7,7 @@ import morgan from 'morgan';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createDb } from './storage/db.js';
+import { createAppwriteServices } from './storage/appwrite.js';
 import jobsRouter from './web/jobs.routes.js';
 import printersRouter from './web/printers.routes.js';
 import chatRouter from './web/chat.routes.js';
@@ -35,26 +36,17 @@ app.use(express.json({ limit: '10mb' }));
 app.use(morgan('dev'));
 
 // initialize DB
-const isVercel = process.env.VERCEL === '1';
-const dbPath = isVercel 
-  ? join('/tmp', 'secureprint.db') 
-  : join(__dirname, '../data/secureprint.db');
-
-// If on Vercel, we need to ensure the DB file exists in /tmp
-if (isVercel && !fs.existsSync(dbPath)) {
-  const initialDbPath = join(__dirname, '../data/secureprint.db');
-  if (fs.existsSync(initialDbPath)) {
-    fs.copyFileSync(initialDbPath, dbPath);
-  }
+const db = createDb(join(__dirname, '../data/secureprint.db'));
+app.set('db', db);
+let appwrite = null;
+try {
+  appwrite = createAppwriteServices();
+} catch (error) {
+  console.error(error.message);
 }
 
-const db = createDb(dbPath);
-app.set('db', db);
-
-const MAX_UPLOAD_BYTES = +(process.env.MAX_UPLOAD_BYTES || 20 * 1024 * 1024);
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_UPLOAD_BYTES }
+  storage: multer.memoryStorage()
 });
 
 const getMasterKey = () => {
@@ -77,7 +69,7 @@ const authMiddleware = (req, res, next) => {
 };
 
 // routes
-app.use('/api/jobs', (req, res, next) => { req.db = db; next(); }, jobsRouter);
+app.use('/api/jobs', (req, res, next) => { req.appwrite = appwrite; next(); }, jobsRouter);
 app.use('/api/printers', (req, res, next) => { req.db = db; next(); }, printersRouter);
 app.use('/api/chat', (req, res, next) => { req.db = db; next(); }, chatRouter);
 
@@ -328,12 +320,8 @@ io.on('connection', (socket) => {
   });
 });
 
-if (!isVercel) {
-  httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`SecurePrint backend running on http://0.0.0.0:${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`Socket.IO enabled for real-time chat`);
-  });
-}
-
-export default app;
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`SecurePrint backend running on http://0.0.0.0:${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Socket.IO enabled for real-time chat`);
+});
