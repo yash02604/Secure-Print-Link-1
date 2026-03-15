@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -6,11 +6,11 @@ import cors from 'cors';
 import morgan from 'morgan';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { createDb } from './storage/db.js';
-import { createAppwriteServices } from './storage/appwrite.js';
+import { createAppwriteServices, appwriteQuery, createFileInputFromBuffer, generateUniqueId } from './storage/appwrite.js';
 import jobsRouter from './web/jobs.routes.js';
 import printersRouter from './web/printers.routes.js';
 import chatRouter from './web/chat.routes.js';
+import authRouter from './web/auth.routes.js';
 import fs from 'fs';
 import { nanoid } from 'nanoid';
 import crypto from 'crypto';
@@ -19,6 +19,11 @@ import { Readable } from 'stream';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+dotenv.config();
+dotenv.config({ path: join(__dirname, '../.env') });
+dotenv.config({ path: join(__dirname, '../../.env') });
+dotenv.config({ path: join(__dirname, '../../env.local') });
 
 const app = express();
 const httpServer = createServer(app);
@@ -35,9 +40,6 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(morgan('dev'));
 
-// initialize DB
-const db = createDb(join(__dirname, '../data/secureprint.db'));
-app.set('db', db);
 let appwrite = null;
 try {
   appwrite = createAppwriteServices();
@@ -59,6 +61,24 @@ const deriveFileKey = (fileId) => {
   return crypto.hkdfSync('sha256', masterKey, Buffer.from(fileId), 'secure-file-encryption', 32);
 };
 
+const toBuffer = async (input) => {
+  if (Buffer.isBuffer(input)) return input;
+  if (input instanceof ArrayBuffer) return Buffer.from(input);
+  if (ArrayBuffer.isView(input)) return Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+  if (input && typeof input.arrayBuffer === 'function') {
+    const arrayBuffer = await input.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  }
+  if (input && typeof input.on === 'function') {
+    const chunks = [];
+    for await (const chunk of input) {
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
+  throw new Error('Unsupported Appwrite file payload');
+};
+
 const authMiddleware = (req, res, next) => {
   const userId = req.headers['x-user-id'] || req.query.userId;
   if (!userId) {
@@ -70,11 +90,15 @@ const authMiddleware = (req, res, next) => {
 
 // routes
 app.use('/api/jobs', (req, res, next) => { req.appwrite = appwrite; next(); }, jobsRouter);
-app.use('/api/printers', (req, res, next) => { req.db = db; next(); }, printersRouter);
-app.use('/api/chat', (req, res, next) => { req.db = db; next(); }, chatRouter);
+app.use('/api/printers', (req, res, next) => { req.appwrite = appwrite; next(); }, printersRouter);
+app.use('/api/chat', (req, res, next) => { req.appwrite = appwrite; next(); }, chatRouter);
+app.use('/api/auth', (req, res, next) => { req.appwrite = appwrite; next(); }, authRouter);
 
-app.post('/upload', authMiddleware, upload.single('file'), (req, res, next) => {
+app.post('/upload', authMiddleware, upload.single('file'), async (req, res, next) => {
   try {
+    if (!appwrite) {
+      return res.status(500).json({ error: 'Appwrite is not configured on the server' });
+    }
     if (!req.file) {
       return res.status(400).json({ error: 'File is required' });
     }
@@ -96,18 +120,26 @@ app.post('/upload', authMiddleware, upload.single('file'), (req, res, next) => {
     const cipher = crypto.createCipheriv('aes-256-gcm', fileKey, iv);
     const encryptedData = Buffer.concat([cipher.update(req.file.buffer), cipher.final()]);
     const authTag = cipher.getAuthTag();
+    const combinedEncrypted = Buffer.concat([iv, authTag, encryptedData]);
 
-    db.prepare(`
-      INSERT INTO encrypted_files (id, filename, encryptedData, iv, authTag, mimeType, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    const storageFile = await appwrite.storage.createFile(
+      appwrite.bucketId,
+      generateUniqueId(),
+      createFileInputFromBuffer(combinedEncrypted, req.file.originalname)
+    );
+
+    await appwrite.databases.createDocument(
+      appwrite.databaseId,
+      appwrite.filesCollectionId,
       fileId,
-      req.file.originalname,
-      encryptedData,
-      iv,
-      authTag,
-      req.file.mimetype,
-      new Date().toISOString()
+      {
+        fileId,
+        storageFileId: storageFile.$id,
+        filename: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        createdAt: new Date().toISOString()
+      }
     );
 
     res.json({
@@ -121,19 +153,26 @@ app.post('/upload', authMiddleware, upload.single('file'), (req, res, next) => {
   }
 });
 
-app.get('/decrypt/:id', authMiddleware, (req, res, next) => {
+app.get('/decrypt/:id', authMiddleware, async (req, res, next) => {
   const { id } = req.params;
 
   try {
-    const record = db.prepare('SELECT * FROM encrypted_files WHERE id = ?').get(id);
-    if (!record) {
-      return res.status(404).json({ error: 'File not found' });
+    if (!appwrite) {
+      return res.status(500).json({ error: 'Appwrite is not configured on the server' });
     }
 
+    const record = await appwrite.databases.getDocument(
+      appwrite.databaseId,
+      appwrite.filesCollectionId,
+      id
+    );
+
     const fileKey = deriveFileKey(id);
-    const iv = record.iv;
-    const authTag = record.authTag;
-    const encryptedData = record.encryptedData;
+    const encryptedPayload = await appwrite.storage.getFileDownload(appwrite.bucketId, record.storageFileId);
+    const encryptedBuffer = await toBuffer(encryptedPayload);
+    const iv = encryptedBuffer.subarray(0, 12);
+    const authTag = encryptedBuffer.subarray(12, 28);
+    const encryptedData = encryptedBuffer.subarray(28);
 
     const decipher = crypto.createDecipheriv('aes-256-gcm', fileKey, iv);
     decipher.setAuthTag(authTag);
@@ -143,16 +182,19 @@ app.get('/decrypt/:id', authMiddleware, (req, res, next) => {
       decipher.final()
     ]);
 
-    res.setHeader('Content-Type', record.mimeType);
+    res.setHeader('Content-Type', record.mimeType || 'application/octet-stream');
     res.setHeader(
       'Content-Disposition',
-      `inline; filename="${encodeURIComponent(record.filename)}"`
+      `inline; filename="${encodeURIComponent(record.filename || 'document.bin')}"`
     );
     res.setHeader('Content-Length', decryptedBuffer.length);
     res.setHeader('Cache-Control', 'no-store');
 
     Readable.from(decryptedBuffer).pipe(res);
   } catch (err) {
+    if (err?.code === 404) {
+      return res.status(404).json({ error: 'File not found' });
+    }
     next(err);
   }
 });
@@ -187,6 +229,15 @@ function generateConversationId(userId, printerShopId) {
     .substring(0, 32);
 }
 
+const getConversationDoc = async (conversationId) => {
+  if (!appwrite) return null;
+  return appwrite.databases.getDocument(
+    appwrite.databaseId,
+    appwrite.conversationsCollectionId,
+    conversationId
+  );
+};
+
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
@@ -211,8 +262,12 @@ io.on('connection', (socket) => {
   // Send message
   socket.on('send_message', async ({ conversationId, senderId, senderRole, message }) => {
     try {
-      // Validate access before sending
-      const conversation = db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId);
+      if (!appwrite) {
+        socket.emit('error', { message: 'Appwrite is not configured' });
+        return;
+      }
+
+      const conversation = await getConversationDoc(conversationId);
       if (!conversation) {
         socket.emit('error', { message: 'Conversation not found' });
         return;
@@ -228,18 +283,33 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Save message to database
       const messageId = nanoid();
       const now = new Date().toISOString();
 
-      db.prepare(`
-        INSERT INTO messages (id, conversationId, senderId, senderRole, message, createdAt, readStatus)
-        VALUES (?, ?, ?, ?, ?, ?, 0)
-      `).run(messageId, conversationId, senderId, senderRole, message, now);
+      await appwrite.databases.createDocument(
+        appwrite.databaseId,
+        appwrite.messagesCollectionId,
+        messageId,
+        {
+          messageId,
+          conversationId,
+          senderId,
+          senderRole,
+          message,
+          createdAt: now,
+          readStatus: false
+        }
+      );
 
-      // Update conversation's lastMessageAt
-      db.prepare('UPDATE conversations SET lastMessageAt = ?, updatedAt = ? WHERE id = ?')
-        .run(now, now, conversationId);
+      await appwrite.databases.updateDocument(
+        appwrite.databaseId,
+        appwrite.conversationsCollectionId,
+        conversationId,
+        {
+          lastMessageAt: now,
+          updatedAt: now
+        }
+      );
 
       const newMessage = {
         id: messageId,
@@ -276,39 +346,51 @@ io.on('connection', (socket) => {
 
   // Mark messages as read
   socket.on('mark_read', ({ conversationId, userId, printerShopId }) => {
-    try {
-      const senderRole = userId ? 'user' : 'printer';
-      const column = userId ? 'userId' : 'printerShopId';
-      const value = userId || printerShopId;
+    (async () => {
+      try {
+        if (!appwrite) {
+          return;
+        }
+        const conversation = await getConversationDoc(conversationId);
+        if (!conversation) {
+          return;
+        }
 
-      // Validate access
-      const conversation = db.prepare(`SELECT * FROM conversations WHERE id = ? AND ${column} = ?`)
-        .get(conversationId, value);
-      
-      if (!conversation) {
-        return;
+        if (userId && conversation.userId !== userId) {
+          return;
+        }
+        if (printerShopId && conversation.printerShopId !== printerShopId) {
+          return;
+        }
+
+        const senderRoleToMark = userId ? 'printer' : 'user';
+        const unread = await appwrite.databases.listDocuments(
+          appwrite.databaseId,
+          appwrite.messagesCollectionId,
+          [
+            appwriteQuery.equal('conversationId', conversationId),
+            appwriteQuery.equal('senderRole', senderRoleToMark),
+            appwriteQuery.equal('readStatus', false),
+            appwriteQuery.limit(100)
+          ]
+        );
+
+        await Promise.all(
+          unread.documents.map((doc) =>
+            appwrite.databases.updateDocument(
+              appwrite.databaseId,
+              appwrite.messagesCollectionId,
+              doc.$id,
+              { readStatus: true }
+            )
+          )
+        );
+
+        socket.to(conversationId).emit('messages_read', { conversationId });
+      } catch (error) {
+        console.error('Error marking messages as read:', error);
       }
-
-      // Mark messages as read
-      if (userId) {
-        db.prepare(`
-          UPDATE messages 
-          SET readStatus = 1 
-          WHERE conversationId = ? AND senderRole = 'printer' AND readStatus = 0
-        `).run(conversationId);
-      } else {
-        db.prepare(`
-          UPDATE messages 
-          SET readStatus = 1 
-          WHERE conversationId = ? AND senderRole = 'user' AND readStatus = 0
-        `).run(conversationId);
-      }
-
-      // Notify other party
-      socket.to(conversationId).emit('messages_read', { conversationId });
-    } catch (error) {
-      console.error('Error marking messages as read:', error);
-    }
+    })();
   });
 
   socket.on('disconnect', () => {

@@ -1,12 +1,11 @@
 import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import crypto from 'crypto';
+import { appwriteQuery } from '../storage/appwrite.js';
 
 const router = Router();
 
-// Generate deterministic conversation ID from userId and printerShopId
 function generateConversationId(userId, printerShopId) {
-  // Sort to ensure consistent ID regardless of order
   const sortedIds = [userId, printerShopId].sort();
   return crypto
     .createHash('sha256')
@@ -15,148 +14,234 @@ function generateConversationId(userId, printerShopId) {
     .substring(0, 32);
 }
 
-// Validate access: user can only access their own conversations
-function validateUserAccess(conversationId, userId, db) {
-  const conversation = db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId);
-  if (!conversation) return { valid: false, error: 'Conversation not found' };
+const appwriteReady = (req, res) => {
+  if (!req.appwrite) {
+    res.status(500).json({ error: 'Appwrite is not configured on the server' });
+    return false;
+  }
+  return true;
+};
+
+const parseConversation = (doc) => ({
+  id: doc.conversationId || doc.$id,
+  userId: doc.userId || '',
+  printerShopId: doc.printerShopId || '',
+  userName: doc.userName || '',
+  userEmail: doc.userEmail || '',
+  printerShopName: doc.printerShopName || '',
+  printerShopLocation: doc.printerShopLocation || '',
+  createdAt: doc.createdAt || doc.$createdAt,
+  updatedAt: doc.updatedAt || doc.$updatedAt,
+  lastMessageAt: doc.lastMessageAt || null
+});
+
+const parseMessage = (doc) => ({
+  id: doc.messageId || doc.$id,
+  conversationId: doc.conversationId,
+  senderId: doc.senderId,
+  senderRole: doc.senderRole,
+  message: doc.message,
+  createdAt: doc.createdAt || doc.$createdAt,
+  readStatus: doc.readStatus ? 1 : 0
+});
+
+const getConversation = async (appwrite, conversationId) => {
+  return appwrite.databases.getDocument(
+    appwrite.databaseId,
+    appwrite.conversationsCollectionId,
+    conversationId
+  );
+};
+
+const validateUserAccess = async (appwrite, conversationId, userId) => {
+  const conversation = await getConversation(appwrite, conversationId);
   if (conversation.userId !== userId) {
-    return { valid: false, error: 'Unauthorized access' };
+    return { valid: false, error: 'Unauthorized access', conversation: null };
   }
   return { valid: true, conversation };
-}
+};
 
-// Validate access: printer shop can only access their conversations
-function validatePrinterAccess(conversationId, printerShopId, db) {
-  const conversation = db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId);
-  if (!conversation) return { valid: false, error: 'Conversation not found' };
+const validatePrinterAccess = async (appwrite, conversationId, printerShopId) => {
+  const conversation = await getConversation(appwrite, conversationId);
   if (conversation.printerShopId !== printerShopId) {
-    return { valid: false, error: 'Unauthorized access' };
+    return { valid: false, error: 'Unauthorized access', conversation: null };
   }
   return { valid: true, conversation };
-}
+};
 
-// Get or create conversation between user and printer shop
-router.post('/conversations', (req, res) => {
-  const db = req.db;
-  const { userId, printerShopId } = req.body;
+router.post('/conversations', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
+  const { userId, printerShopId, userName = '', userEmail = '', printerShopName = '', printerShopLocation = '' } = req.body;
 
   if (!userId || !printerShopId) {
     return res.status(400).json({ error: 'userId and printerShopId are required' });
   }
 
-  // Verify user exists
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-
-  // Verify printer shop exists
-  const printer = db.prepare('SELECT * FROM printers WHERE id = ?').get(printerShopId);
-  if (!printer) {
-    return res.status(404).json({ error: 'Printer shop not found' });
-  }
-
-  // Generate deterministic conversation ID
   const conversationId = generateConversationId(userId, printerShopId);
+  const now = new Date().toISOString();
 
-  // Check if conversation already exists
-  let conversation = db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId);
+  try {
+    let conversation = null;
+    try {
+      conversation = await getConversation(appwrite, conversationId);
+    } catch (error) {
+      if (error?.code !== 404) {
+        throw error;
+      }
+    }
 
-  if (!conversation) {
-    // Create new conversation
-    const now = new Date().toISOString();
-    db.prepare(`
-      INSERT INTO conversations (id, userId, printerShopId, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(conversationId, userId, printerShopId, now, now);
+    if (!conversation) {
+      conversation = await appwrite.databases.createDocument(
+        appwrite.databaseId,
+        appwrite.conversationsCollectionId,
+        conversationId,
+        {
+          conversationId,
+          userId,
+          printerShopId,
+          userName,
+          userEmail,
+          printerShopName,
+          printerShopLocation,
+          createdAt: now,
+          updatedAt: now,
+          lastMessageAt: null
+        }
+      );
+    }
 
-    conversation = { id: conversationId, userId, printerShopId, createdAt: now, updatedAt: now, lastMessageAt: null };
+    return res.json({ conversation: parseConversation(conversation) });
+  } catch (error) {
+    console.error('Error creating conversation:', error);
+    return res.status(500).json({ error: 'Failed to create conversation' });
   }
-
-  res.json({ conversation });
 });
 
-// Get all conversations for a user
-router.get('/conversations/user/:userId', (req, res) => {
-  const db = req.db;
+router.get('/conversations/user/:userId', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
   const { userId } = req.params;
 
-  const conversations = db.prepare(`
-    SELECT 
-      c.*,
-      p.name as printerShopName,
-      p.location as printerShopLocation,
-      (SELECT COUNT(*) FROM messages WHERE conversationId = c.id AND readStatus = 0 AND senderId != ?) as unreadCount
-    FROM conversations c
-    JOIN printers p ON c.printerShopId = p.id
-    WHERE c.userId = ?
-    ORDER BY c.lastMessageAt DESC NULLS LAST, c.createdAt DESC
-  `).all(userId, userId);
+  try {
+    const { documents } = await appwrite.databases.listDocuments(
+      appwrite.databaseId,
+      appwrite.conversationsCollectionId,
+      [appwriteQuery.equal('userId', userId), appwriteQuery.limit(100), appwriteQuery.orderDesc('updatedAt')]
+    );
 
-  res.json({ conversations });
+    const conversations = [];
+    for (const doc of documents) {
+      const unreadResp = await appwrite.databases.listDocuments(
+        appwrite.databaseId,
+        appwrite.messagesCollectionId,
+        [
+          appwriteQuery.equal('conversationId', doc.conversationId || doc.$id),
+          appwriteQuery.equal('readStatus', false),
+          appwriteQuery.notEqual('senderId', userId),
+          appwriteQuery.limit(1)
+        ]
+      );
+      conversations.push({
+        ...parseConversation(doc),
+        unreadCount: unreadResp.total
+      });
+    }
+    return res.json({ conversations });
+  } catch (error) {
+    console.error('Error getting user conversations:', error);
+    return res.status(500).json({ error: 'Failed to fetch conversations' });
+  }
 });
 
-// Get all conversations for a printer shop
-router.get('/conversations/printer/:printerShopId', (req, res) => {
-  const db = req.db;
+router.get('/conversations/printer/:printerShopId', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
   const { printerShopId } = req.params;
 
-  const conversations = db.prepare(`
-    SELECT 
-      c.*,
-      u.name as userName,
-      u.email as userEmail,
-      (SELECT COUNT(*) FROM messages WHERE conversationId = c.id AND readStatus = 0 AND senderId != ?) as unreadCount
-    FROM conversations c
-    JOIN users u ON c.userId = u.id
-    WHERE c.printerShopId = ?
-    ORDER BY c.lastMessageAt DESC NULLS LAST, c.createdAt DESC
-  `).all(printerShopId, printerShopId);
+  try {
+    const { documents } = await appwrite.databases.listDocuments(
+      appwrite.databaseId,
+      appwrite.conversationsCollectionId,
+      [appwriteQuery.equal('printerShopId', printerShopId), appwriteQuery.limit(100), appwriteQuery.orderDesc('updatedAt')]
+    );
 
-  res.json({ conversations });
+    const conversations = [];
+    for (const doc of documents) {
+      const unreadResp = await appwrite.databases.listDocuments(
+        appwrite.databaseId,
+        appwrite.messagesCollectionId,
+        [
+          appwriteQuery.equal('conversationId', doc.conversationId || doc.$id),
+          appwriteQuery.equal('readStatus', false),
+          appwriteQuery.notEqual('senderId', printerShopId),
+          appwriteQuery.limit(1)
+        ]
+      );
+      conversations.push({
+        ...parseConversation(doc),
+        unreadCount: unreadResp.total
+      });
+    }
+    return res.json({ conversations });
+  } catch (error) {
+    console.error('Error getting printer conversations:', error);
+    return res.status(500).json({ error: 'Failed to fetch conversations' });
+  }
 });
 
-// Get messages for a conversation (with pagination)
-router.get('/conversations/:conversationId/messages', (req, res) => {
-  const db = req.db;
+router.get('/conversations/:conversationId/messages', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
   const { conversationId } = req.params;
   const { userId, printerShopId, limit = 50, offset = 0 } = req.query;
 
-  // Validate access
-  if (userId) {
-    const validation = validateUserAccess(conversationId, userId, db);
-    if (!validation.valid) {
-      return res.status(403).json({ error: validation.error });
+  try {
+    if (userId) {
+      const validation = await validateUserAccess(appwrite, conversationId, userId);
+      if (!validation.valid) {
+        return res.status(403).json({ error: validation.error });
+      }
+    } else if (printerShopId) {
+      const validation = await validatePrinterAccess(appwrite, conversationId, printerShopId);
+      if (!validation.valid) {
+        return res.status(403).json({ error: validation.error });
+      }
+    } else {
+      return res.status(400).json({ error: 'userId or printerShopId is required' });
     }
-  } else if (printerShopId) {
-    const validation = validatePrinterAccess(conversationId, printerShopId, db);
-    if (!validation.valid) {
-      return res.status(403).json({ error: validation.error });
+
+    const parsedLimit = parseInt(limit, 10);
+    const parsedOffset = parseInt(offset, 10);
+    const response = await appwrite.databases.listDocuments(
+      appwrite.databaseId,
+      appwrite.messagesCollectionId,
+      [
+        appwriteQuery.equal('conversationId', conversationId),
+        appwriteQuery.orderDesc('createdAt'),
+        appwriteQuery.limit(parsedLimit),
+        appwriteQuery.offset(parsedOffset)
+      ]
+    );
+
+    const messages = response.documents.map(parseMessage).reverse();
+    return res.json({
+      messages,
+      totalCount: response.total,
+      hasMore: parsedOffset + messages.length < response.total
+    });
+  } catch (error) {
+    if (error?.code === 404) {
+      return res.status(404).json({ error: 'Conversation not found' });
     }
-  } else {
-    return res.status(400).json({ error: 'userId or printerShopId is required' });
+    console.error('Error fetching messages:', error);
+    return res.status(500).json({ error: 'Failed to fetch messages' });
   }
-
-  // Get messages with pagination (most recent first)
-  const messages = db.prepare(`
-    SELECT * FROM messages 
-    WHERE conversationId = ? 
-    ORDER BY createdAt DESC
-    LIMIT ? OFFSET ?
-  `).all(conversationId, parseInt(limit), parseInt(offset));
-
-  // Reverse to show oldest first
-  messages.reverse();
-
-  // Get total count
-  const totalCount = db.prepare('SELECT COUNT(*) as count FROM messages WHERE conversationId = ?').get(conversationId).count;
-
-  res.json({ messages, totalCount, hasMore: (parseInt(offset) + messages.length) < totalCount });
 });
 
-// Send a message
-router.post('/messages', (req, res) => {
-  const db = req.db;
+router.post('/messages', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
   const { conversationId, senderId, senderRole, message } = req.body;
 
   if (!conversationId || !senderId || !senderRole || !message) {
@@ -168,112 +253,146 @@ router.post('/messages', (req, res) => {
     return res.status(400).json({ error: 'senderRole must be "user" or "printer"' });
   }
 
-  // Validate access
-  if (senderRole === 'user') {
-    const validation = validateUserAccess(conversationId, senderId, db);
+  try {
+    let validation;
+    if (senderRole === 'user') {
+      validation = await validateUserAccess(appwrite, conversationId, senderId);
+    } else {
+      validation = await validatePrinterAccess(appwrite, conversationId, senderId);
+    }
     if (!validation.valid) {
       return res.status(403).json({ error: validation.error });
     }
-  } else {
-    const validation = validatePrinterAccess(conversationId, senderId, db);
-    if (!validation.valid) {
-      return res.status(403).json({ error: validation.error });
+
+    const messageId = nanoid();
+    const now = new Date().toISOString();
+    const newMessageDoc = await appwrite.databases.createDocument(
+      appwrite.databaseId,
+      appwrite.messagesCollectionId,
+      messageId,
+      {
+        messageId,
+        conversationId,
+        senderId,
+        senderRole,
+        message,
+        createdAt: now,
+        readStatus: false
+      }
+    );
+
+    await appwrite.databases.updateDocument(
+      appwrite.databaseId,
+      appwrite.conversationsCollectionId,
+      conversationId,
+      { lastMessageAt: now, updatedAt: now }
+    );
+    return res.json({ message: parseMessage(newMessageDoc) });
+  } catch (error) {
+    if (error?.code === 404) {
+      return res.status(404).json({ error: 'Conversation not found' });
     }
+    console.error('Error sending message:', error);
+    return res.status(500).json({ error: 'Failed to send message' });
   }
-
-  // Create message
-  const messageId = nanoid();
-  const now = new Date().toISOString();
-
-  db.prepare(`
-    INSERT INTO messages (id, conversationId, senderId, senderRole, message, createdAt, readStatus)
-    VALUES (?, ?, ?, ?, ?, ?, 0)
-  `).run(messageId, conversationId, senderId, senderRole, message, now);
-
-  // Update conversation's lastMessageAt
-  db.prepare('UPDATE conversations SET lastMessageAt = ?, updatedAt = ? WHERE id = ?')
-    .run(now, now, conversationId);
-
-  const newMessage = {
-    id: messageId,
-    conversationId,
-    senderId,
-    senderRole,
-    message,
-    createdAt: now,
-    readStatus: 0
-  };
-
-  res.json({ message: newMessage });
 });
 
-// Mark messages as read
-router.patch('/messages/read', (req, res) => {
-  const db = req.db;
+router.patch('/messages/read', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
   const { conversationId, userId, printerShopId } = req.body;
 
   if (!conversationId || (!userId && !printerShopId)) {
     return res.status(400).json({ error: 'conversationId and (userId or printerShopId) are required' });
   }
 
-  // Validate access
-  if (userId) {
-    const validation = validateUserAccess(conversationId, userId, db);
-    if (!validation.valid) {
-      return res.status(403).json({ error: validation.error });
+  try {
+    let senderRoleToMark;
+    if (userId) {
+      const validation = await validateUserAccess(appwrite, conversationId, userId);
+      if (!validation.valid) {
+        return res.status(403).json({ error: validation.error });
+      }
+      senderRoleToMark = 'printer';
+    } else {
+      const validation = await validatePrinterAccess(appwrite, conversationId, printerShopId);
+      if (!validation.valid) {
+        return res.status(403).json({ error: validation.error });
+      }
+      senderRoleToMark = 'user';
     }
-    // Mark messages from printer as read
-    db.prepare(`
-      UPDATE messages 
-      SET readStatus = 1 
-      WHERE conversationId = ? AND senderRole = 'printer' AND readStatus = 0
-    `).run(conversationId);
-  } else {
-    const validation = validatePrinterAccess(conversationId, printerShopId, db);
-    if (!validation.valid) {
-      return res.status(403).json({ error: validation.error });
-    }
-    // Mark messages from user as read
-    db.prepare(`
-      UPDATE messages 
-      SET readStatus = 1 
-      WHERE conversationId = ? AND senderRole = 'user' AND readStatus = 0
-    `).run(conversationId);
-  }
 
-  res.json({ success: true });
+    const response = await appwrite.databases.listDocuments(
+      appwrite.databaseId,
+      appwrite.messagesCollectionId,
+      [
+        appwriteQuery.equal('conversationId', conversationId),
+        appwriteQuery.equal('senderRole', senderRoleToMark),
+        appwriteQuery.equal('readStatus', false),
+        appwriteQuery.limit(100)
+      ]
+    );
+
+    await Promise.all(
+      response.documents.map((messageDoc) =>
+        appwrite.databases.updateDocument(
+          appwrite.databaseId,
+          appwrite.messagesCollectionId,
+          messageDoc.$id,
+          { readStatus: true }
+        )
+      )
+    );
+
+    return res.json({ success: true });
+  } catch (error) {
+    if (error?.code === 404) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    console.error('Error marking messages as read:', error);
+    return res.status(500).json({ error: 'Failed to mark messages as read' });
+  }
 });
 
-// Get unread message count
-router.get('/messages/unread', (req, res) => {
-  const db = req.db;
+router.get('/messages/unread', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
   const { userId, printerShopId } = req.query;
 
   if (!userId && !printerShopId) {
     return res.status(400).json({ error: 'userId or printerShopId is required' });
   }
 
-  let unreadCount = 0;
+  try {
+    const identity = userId || printerShopId;
+    const conversationQueryField = userId ? 'userId' : 'printerShopId';
+    const senderRoleToCount = userId ? 'printer' : 'user';
+    const conversationsResp = await appwrite.databases.listDocuments(
+      appwrite.databaseId,
+      appwrite.conversationsCollectionId,
+      [appwriteQuery.equal(conversationQueryField, identity), appwriteQuery.limit(100)]
+    );
 
-  if (userId) {
-    // Count unread messages for user (messages from printers)
-    unreadCount = db.prepare(`
-      SELECT COUNT(*) as count 
-      FROM messages m
-      JOIN conversations c ON m.conversationId = c.id
-      WHERE c.userId = ? AND m.senderRole = 'printer' AND m.readStatus = 0
-    `).get(userId).count;
-  } else {
-    // Count unread messages for printer shop (messages from users)
-    unreadCount = db.prepare(`
-      SELECT COUNT(*) as count 
-      FROM messages m
-      JOIN conversations c ON m.conversationId = c.id
-      WHERE c.printerShopId = ? AND m.senderRole = 'user' AND m.readStatus = 0
-    `).get(printerShopId).count;
+    let unreadCount = 0;
+    for (const conversation of conversationsResp.documents) {
+      const unreadResp = await appwrite.databases.listDocuments(
+        appwrite.databaseId,
+        appwrite.messagesCollectionId,
+        [
+          appwriteQuery.equal('conversationId', conversation.conversationId || conversation.$id),
+          appwriteQuery.equal('senderRole', senderRoleToCount),
+          appwriteQuery.equal('readStatus', false),
+          appwriteQuery.limit(1)
+        ]
+      );
+      unreadCount += unreadResp.total;
+    }
+
+    return res.json({ unreadCount });
+  } catch (error) {
+    console.error('Error getting unread count:', error);
+    return res.status(500).json({ error: 'Failed to fetch unread count' });
   }
-
-  res.json({ unreadCount });
 });
 
 export default router;

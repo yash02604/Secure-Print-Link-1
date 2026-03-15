@@ -1,4 +1,5 @@
-import { Client, Databases, Storage, ID, InputFile, Query } from 'node-appwrite';
+import { Client, Databases, Storage, ID, Query } from 'node-appwrite';
+import { InputFile } from 'node-appwrite/file';
 
 const requiredEnv = [
   'APPWRITE_ENDPOINT',
@@ -27,7 +28,12 @@ export const createAppwriteServices = () => {
     storage: new Storage(client),
     databaseId: process.env.APPWRITE_DATABASE_ID,
     collectionId: process.env.APPWRITE_COLLECTION_ID,
-    bucketId: process.env.APPWRITE_BUCKET_ID
+    bucketId: process.env.APPWRITE_BUCKET_ID,
+    usersCollectionId: process.env.APPWRITE_USERS_COLLECTION_ID || 'users',
+    printersCollectionId: process.env.APPWRITE_PRINTERS_COLLECTION_ID || 'printers',
+    conversationsCollectionId: process.env.APPWRITE_CONVERSATIONS_COLLECTION_ID || 'conversations',
+    messagesCollectionId: process.env.APPWRITE_MESSAGES_COLLECTION_ID || 'messages',
+    filesCollectionId: process.env.APPWRITE_FILES_COLLECTION_ID || 'encrypted_files'
   };
 };
 

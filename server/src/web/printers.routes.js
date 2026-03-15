@@ -1,42 +1,148 @@
 import { Router } from 'express';
 import { nanoid } from 'nanoid';
+import { appwriteQuery } from '../storage/appwrite.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const db = req.db;
-  const printers = db.prepare('SELECT * FROM printers').all().map(p => ({
-    ...p,
-    capabilities: p.capabilities ? JSON.parse(p.capabilities) : []
-  }));
-  res.json({ printers });
+const appwriteReady = (req, res) => {
+  if (!req.appwrite) {
+    res.status(500).json({ error: 'Appwrite is not configured on the server' });
+    return false;
+  }
+  return true;
+};
+
+const parsePrinter = (doc) => ({
+  id: doc.printerId || doc.$id,
+  name: doc.name || '',
+  location: doc.location || '',
+  model: doc.model || '',
+  status: doc.status || 'online',
+  ip: doc.ip || '',
+  capabilities: (() => {
+    if (Array.isArray(doc.capabilities)) return doc.capabilities;
+    if (typeof doc.capabilities === 'string' && doc.capabilities.trim()) {
+      try {
+        return JSON.parse(doc.capabilities);
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  })(),
+  department: doc.department || 'All'
 });
 
-router.post('/', (req, res) => {
-  const db = req.db;
+const listAllPrinters = async (appwrite) => {
+  const printers = [];
+  let offset = 0;
+  while (true) {
+    const { documents, total } = await appwrite.databases.listDocuments(
+      appwrite.databaseId,
+      appwrite.printersCollectionId,
+      [appwriteQuery.limit(100), appwriteQuery.offset(offset)]
+    );
+    printers.push(...documents);
+    offset += documents.length;
+    if (printers.length >= total || documents.length === 0) {
+      break;
+    }
+  }
+  return printers;
+};
+
+router.get('/', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
+  try {
+    const printers = await listAllPrinters(appwrite);
+    return res.json({ printers: printers.map(parsePrinter) });
+  } catch (error) {
+    console.error('Error fetching printers from Appwrite:', error);
+    return res.status(500).json({ error: 'Failed to fetch printers' });
+  }
+});
+
+router.post('/', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
   const { name, location, model, status = 'online', ip, capabilities = [], department = 'All' } = req.body || {};
   const id = nanoid();
-  db.prepare(`INSERT INTO printers (id, name, location, model, status, ip, capabilities, department)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, name, location, model, status, ip, JSON.stringify(capabilities), department);
-  res.json({ printer: { id, name, location, model, status, ip, capabilities, department } });
+  try {
+    const payload = {
+      printerId: id,
+      name: name || '',
+      location: location || '',
+      model: model || '',
+      status,
+      ip: ip || '',
+      capabilities: JSON.stringify(Array.isArray(capabilities) ? capabilities : []),
+      department
+    };
+    await appwrite.databases.createDocument(
+      appwrite.databaseId,
+      appwrite.printersCollectionId,
+      id,
+      payload
+    );
+    return res.json({ printer: { id, name, location, model, status, ip, capabilities, department } });
+  } catch (error) {
+    console.error('Error creating printer in Appwrite:', error);
+    return res.status(500).json({ error: 'Failed to create printer' });
+  }
 });
 
-router.patch('/:id', (req, res) => {
-  const db = req.db;
+router.patch('/:id', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
   const { id } = req.params;
-  const { status } = req.body || {};
-  db.prepare('UPDATE printers SET status = ? WHERE id = ?').run(status, id);
-  res.json({ success: true });
+  const updates = req.body || {};
+  const payload = {};
+  if (updates.status !== undefined) payload.status = updates.status;
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.location !== undefined) payload.location = updates.location;
+  if (updates.model !== undefined) payload.model = updates.model;
+  if (updates.ip !== undefined) payload.ip = updates.ip;
+  if (updates.department !== undefined) payload.department = updates.department;
+  if (updates.capabilities !== undefined) {
+    payload.capabilities = JSON.stringify(Array.isArray(updates.capabilities) ? updates.capabilities : []);
+  }
+  try {
+    await appwrite.databases.updateDocument(
+      appwrite.databaseId,
+      appwrite.printersCollectionId,
+      id,
+      payload
+    );
+    return res.json({ success: true });
+  } catch (error) {
+    if (error?.code === 404) {
+      return res.status(404).json({ error: 'Printer not found' });
+    }
+    console.error('Error updating printer in Appwrite:', error);
+    return res.status(500).json({ error: 'Failed to update printer' });
+  }
 });
 
-router.delete('/:id', (req, res) => {
-  const db = req.db;
+router.delete('/:id', async (req, res) => {
+  if (!appwriteReady(req, res)) return;
+  const appwrite = req.appwrite;
   const { id } = req.params;
-  db.prepare('DELETE FROM printers WHERE id = ?').run(id);
-  res.json({ success: true });
+  try {
+    await appwrite.databases.deleteDocument(
+      appwrite.databaseId,
+      appwrite.printersCollectionId,
+      id
+    );
+    return res.json({ success: true });
+  } catch (error) {
+    if (error?.code === 404) {
+      return res.status(404).json({ error: 'Printer not found' });
+    }
+    console.error('Error deleting printer from Appwrite:', error);
+    return res.status(500).json({ error: 'Failed to delete printer' });
+  }
 });
 
 export default router;
-
 
