@@ -1,3 +1,9 @@
-import app from '../server/src/server.js';
+let appPromise;
 
-export default app;
+module.exports = async (req, res) => {
+  if (!appPromise) {
+    appPromise = import('../server/src/server.js').then((mod) => mod.default || mod.app);
+  }
+  const app = await appPromise;
+  return app(req, res);
+};
