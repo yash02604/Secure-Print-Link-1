@@ -271,6 +271,10 @@ const createJob = async (req, res, appwrite) => {
   const notes = body.notes || '';
   const baseCost = 0.1;
   const cost = +(baseCost * pages * copies * (color ? 2 : 1) * (duplex ? 0.8 : 1)).toFixed(2);
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  const protocol = req.headers['x-forwarded-proto'] || 'https';
+  const origin = process.env.PUBLIC_BASE_URL || `${protocol}://${host}`;
+  const releaseLink = `${origin.replace(/\/$/, '')}/release/${jobId}?token=${secureToken}`;
 
   const encryptedContent = encryptDocumentForJob(req.file.buffer, jobId);
   let uploadedFile;
@@ -308,6 +312,7 @@ const createJob = async (req, res, appwrite) => {
     notes,
     cost,
     submittedAt,
+    releaseLink,
     viewCount: 0,
     filename: req.file.originalname,
     size: req.file.size
@@ -333,6 +338,7 @@ const createJob = async (req, res, appwrite) => {
       cost,
       submittedAt,
       secureToken: secureToken,
+      releaseLink,
       expiresAt
     }
   });
