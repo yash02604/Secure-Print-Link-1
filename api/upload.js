@@ -1,9 +1,9 @@
 import multer from 'multer';
 import crypto from 'crypto';
-import { nanoid } from 'nanoid';
 import { createAppwriteServices, createFileInputFromBuffer, generateUniqueId } from '../server/src/appwrite.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
+const makeId = (size = 21) => crypto.randomBytes(Math.max(16, size)).toString('base64url').slice(0, size);
 
 const runUpload = (req, res) =>
   new Promise((resolve, reject) => {
@@ -41,7 +41,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'File is required' });
     }
 
-    const fileId = nanoid();
+    const fileId = makeId(21);
     const fileKey = deriveFileKey(fileId);
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', fileKey, iv);

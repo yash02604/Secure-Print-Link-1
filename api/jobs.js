@@ -1,6 +1,5 @@
 import multer from 'multer';
 import crypto from 'crypto';
-import { nanoid } from 'nanoid';
 import {
   createAppwriteServices,
   createFileInputFromBuffer,
@@ -9,6 +8,7 @@ import {
 } from '../server/src/appwrite.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
+const makeId = (size = 21) => crypto.randomBytes(Math.max(16, size)).toString('base64url').slice(0, size);
 
 const asBoolean = (value) => value === true || value === 1 || value === '1' || value === 'true';
 
@@ -223,8 +223,8 @@ const createJob = async (req, res, appwrite) => {
     return res.status(500).json({ error: 'Appwrite storage bucket is not configured on the server' });
   }
 
-  const jobId = nanoid();
-  const secureToken = nanoid(32);
+  const jobId = makeId(21);
+  const secureToken = makeId(32);
   const expirationDuration = parseInt(body.expirationDuration || 15, 10);
   const expiresAt = new Date(Date.now() + expirationDuration * 60 * 1000).toISOString();
   const submittedAt = new Date().toISOString();
