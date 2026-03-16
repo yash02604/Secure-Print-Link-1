@@ -127,20 +127,16 @@ const parseJob = (doc, req) => {
 
 const isExpired = (expiresAt) => expiresAt ? Date.now() >= new Date(expiresAt).getTime() : false;
 
-const deleteFileSilently = async (appwrite, fileId) => {
-  if (!fileId || !appwrite.bucketId) return;
-  try {
-    await appwrite.storage.deleteFile(appwrite.bucketId, fileId);
-  } catch (error) {
-    if (error?.code !== 404) {
-      console.error('Failed to delete Appwrite file:', fileId, error);
-    }
+const markJobExpired = async (appwrite, jobDoc) => {
+  if ((jobDoc.status || '') === 'expired') {
+    return;
   }
-};
-
-const deleteJobPermanently = async (appwrite, jobDoc) => {
-  await deleteFileSilently(appwrite, jobDoc.fileId);
-  await appwrite.databases.deleteDocument(appwrite.databaseId, appwrite.collectionId, jobDoc.$id || jobDoc.jobId);
+  await appwrite.databases.updateDocument(
+    appwrite.databaseId,
+    appwrite.collectionId,
+    jobDoc.$id || jobDoc.jobId,
+    { status: 'expired' }
+  );
 };
 
 const runUpload = (req, res) =>
@@ -179,7 +175,7 @@ const getJob = async (req, res, appwrite, id, token) => {
     return res.status(403).json({ error: 'Invalid token' });
   }
   if (isExpired(jobDoc.expiresAt)) {
-    await deleteJobPermanently(appwrite, jobDoc);
+    await markJobExpired(appwrite, jobDoc);
     return res.status(410).json({ error: 'Print link has expired' });
   }
   return res.status(200).json({ job: parseJob(jobDoc, req) });
@@ -191,7 +187,7 @@ const getJobContent = async (res, appwrite, id, token) => {
     return res.status(403).json({ error: 'Invalid token' });
   }
   if (isExpired(jobDoc.expiresAt)) {
-    await deleteJobPermanently(appwrite, jobDoc);
+    await markJobExpired(appwrite, jobDoc);
     return res.status(410).json({ error: 'Print link has expired' });
   }
   if (!jobDoc.fileId) {
@@ -216,7 +212,7 @@ const viewJob = async (res, appwrite, id, token) => {
     return res.status(403).json({ error: 'Invalid token' });
   }
   if (isExpired(jobDoc.expiresAt)) {
-    await deleteJobPermanently(appwrite, jobDoc);
+    await markJobExpired(appwrite, jobDoc);
     return res.status(410).json({ error: 'Print link has expired' });
   }
   if ((jobDoc.status || 'pending') !== 'pending') {

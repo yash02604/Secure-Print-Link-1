@@ -473,15 +473,15 @@ const PrintRelease = () => {
         const releaseState = await api.get(`/api/release/${token}`);
         const state = releaseState?.data?.status;
         if (state === 'expired') {
-          toast.info('This print link has expired.', { autoClose: 5000 });
+          toast.info('This secure print link has expired.', { autoClose: 5000 });
           return;
         }
         if (state === 'deleted') {
-          toast.info('This document has been removed.', { autoClose: 5000 });
+          toast.info('This document has been removed from the system.', { autoClose: 5000 });
           return;
         }
         if (state === 'already_used') {
-          toast.info('This print link has already been used.', { autoClose: 5000 });
+          toast.info('This print job has already been completed.', { autoClose: 5000 });
           return;
         }
         const resolvedJobId = releaseState?.data?.jobId || jobId;
