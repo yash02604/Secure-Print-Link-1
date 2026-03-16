@@ -470,16 +470,31 @@ const PrintRelease = () => {
     // Try server API validation first (permanent fix)
     const validateFromServer = async () => {
       try {
-        const response = await api.get(`/api/jobs/${jobId}?token=${token}`);
+        const releaseState = await api.get(`/api/release/${token}`);
+        const state = releaseState?.data?.status;
+        if (state === 'expired') {
+          toast.info('This print link has expired.', { autoClose: 5000 });
+          return;
+        }
+        if (state === 'deleted') {
+          toast.info('This document has been removed.', { autoClose: 5000 });
+          return;
+        }
+        if (state === 'already_used') {
+          toast.info('This print link has already been used.', { autoClose: 5000 });
+          return;
+        }
+        const resolvedJobId = releaseState?.data?.jobId || jobId;
+        const response = await api.get(`/api/jobs/${resolvedJobId}?token=${token}`);
         if (response.data.job) {
           setServerJob(response.data.job);
-          setLinkTargetJobId(jobId);
+          setLinkTargetJobId(resolvedJobId);
           // Cache document in browser memory for multi-use
           if (response.data.job.document) {
             setCachedDocument(response.data.job.document);
           } else {
             const fetchedDocument = await fetchDocumentContent(
-              jobId,
+              resolvedJobId,
               token,
               response.data.job.mimeType,
               response.data.job.documentName

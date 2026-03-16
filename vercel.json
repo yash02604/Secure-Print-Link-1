@@ -1,5 +1,9 @@
 {
+  "crons": [
+    { "path": "/api/cron/cleanup", "schedule": "*/10 * * * *" }
+  ],
   "rewrites": [
+    { "source": "/api/release/:token", "destination": "/api/release?token=:token" },
     { "source": "/api/jobs/:id/content", "destination": "/api/jobs?id=:id&action=content" },
     { "source": "/api/jobs/:id/view", "destination": "/api/jobs?id=:id&action=view" },
     { "source": "/api/jobs/:id/release", "destination": "/api/release?id=:id" },
